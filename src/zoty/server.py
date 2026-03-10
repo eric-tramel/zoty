@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import threading
 
 from mcp.server.fastmcp import FastMCP
@@ -104,10 +105,58 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
     return connector.add_paper(arxiv_id=arxiv_id, doi=doi, collection_key=collection_key)
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the zoty MCP server.")
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "sse", "streamable-http"),
+        default="stdio",
+        help="MCP transport to serve. Use streamable-http for one shared local server.",
+    )
+    parser.add_argument(
+        "--host",
+        help="Bind host for HTTP transports.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="Bind port for HTTP transports.",
+    )
+    parser.add_argument(
+        "--streamable-http-path",
+        help="HTTP path for the streamable MCP endpoint.",
+    )
+    parser.add_argument(
+        "--sse-path",
+        help="HTTP path for the SSE endpoint.",
+    )
+    parser.add_argument(
+        "--message-path",
+        help="HTTP path for SSE message posts.",
+    )
+    return parser.parse_args(argv)
+
+
+def _apply_server_args(args: argparse.Namespace) -> None:
+    if args.host:
+        mcp_server.settings.host = args.host
+    if args.port is not None:
+        mcp_server.settings.port = args.port
+    if args.streamable_http_path:
+        mcp_server.settings.streamable_http_path = args.streamable_http_path
+    if args.sse_path:
+        mcp_server.settings.sse_path = args.sse_path
+    if args.message_path:
+        mcp_server.settings.message_path = args.message_path
+
+
+def main(argv: list[str] | None = None) -> None:
     """Entry point: build search index in background, start MCP server."""
+    args = _parse_args(argv)
+    _apply_server_args(args)
+
     # Build search index in background thread so MCP transport starts immediately
     build_thread = threading.Thread(target=db.build_index_background, daemon=True)
     build_thread.start()
 
-    mcp_server.run()
+    mcp_server.run(transport=args.transport)

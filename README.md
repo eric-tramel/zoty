@@ -84,6 +84,8 @@ Read operations go through [pyzotero](https://github.com/urschrei/pyzotero) agai
 
 Write operations use the Zotero connector endpoint (`/connector/saveItems`) to create metadata items. PDF attachment and collection assignment go through the zoty-bridge plugin, which executes JavaScript in Zotero's privileged context. This two-path design exists because Zotero's SQLite database uses exclusive locking -- external processes can read it (immutable mode) but not write to it while Zotero is running.
 
+arXiv traffic is throttled internally to respect arXiv's access policy. Concurrent `add_paper` calls queue transparently: metadata requests serialize with a 3-second gap, and arXiv PDF downloads are rate-limited separately.
+
 ## Development
 
 ```bash
@@ -94,3 +96,72 @@ make test    # run Python unit tests
 ## License
 
 MIT
+
+## Rate Limiting Across Sessions
+
+zoty rate-limits arXiv traffic inside the running MCP server process. If several `add_paper` calls reach the same server at once, zoty queues them and drains metadata requests at arXiv-safe speed.
+
+That limiter is not shared across separate zoty processes. If you start one zoty instance per agent, session, or editor window, each process will enforce its own limit and the combined request rate can still exceed arXiv policy.
+
+If you expect multiple sessions to pull papers at the same time, start one long-lived zoty server and point all clients at that same instance.
+
+Start one shared local server:
+
+```bash
+zoty --transport streamable-http --host 127.0.0.1 --port 8000
+```
+
+The shared MCP endpoint will be:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+If you want a different endpoint path:
+
+```bash
+zoty \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --streamable-http-path /zoty-mcp
+```
+
+Then point every client at the same URL:
+
+```text
+http://127.0.0.1:8000/zoty-mcp
+```
+
+For clients that support remote MCP servers by URL, the config should look like this:
+
+```json
+{
+  "mcpServers": {
+    "zoty": {
+      "url": "http://127.0.0.1:8000/mcp"
+    }
+  }
+}
+```
+
+Avoid this pattern when multiple sessions may import papers in parallel, because it starts a separate zoty process per client:
+
+```json
+{
+  "mcpServers": {
+    "zoty": {
+      "command": "zoty"
+    }
+  }
+}
+```
+
+Recommended boot sequence:
+
+1. Boot Zotero and make sure the Zotero connector and `zoty-bridge` plugin are available.
+2. Start one shared zoty server with `--transport streamable-http`.
+3. Configure each agent or MCP client to connect to that existing server URL instead of launching its own copy.
+4. Let the shared server serialize arXiv metadata lookups and rate-limit arXiv PDF downloads for everyone.
+
+This keeps the agent-side behavior simple: tool calls may take a bit longer under load, but they will queue naturally instead of hammering `export.arxiv.org`.

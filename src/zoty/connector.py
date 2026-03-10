@@ -6,6 +6,7 @@ HTTP endpoint, which executes JavaScript inside Zotero's privileged context.
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import os
 import random
@@ -13,9 +14,11 @@ import sqlite3
 import string
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -34,6 +37,83 @@ _ZOTERO_STORAGE = _ZOTERO_DIR / "storage"
 _ZOTERO_DB = _ZOTERO_DIR / "zotero.sqlite"
 _COLLECTION_ASSIGN_RETRIES = 3
 _COLLECTION_ASSIGN_RETRY_DELAY = 0.25
+_ARXIV_METADATA_MIN_INTERVAL = 3.0
+_ARXIV_PDF_WINDOW_SECONDS = 1.0
+_ARXIV_PDF_MAX_DOWNLOADS = 4
+
+
+class _SerializedRateLimiter:
+    """Queue callers and leave a fixed quiet period after each call."""
+
+    def __init__(
+        self,
+        *,
+        min_interval: float,
+        clock=time.monotonic,
+        sleep=time.sleep,
+    ) -> None:
+        self._min_interval = min_interval
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._next_allowed_at = 0.0
+
+    def run(self, func, *args, **kwargs):
+        with self._lock:
+            wait = self._next_allowed_at - self._clock()
+            if wait > 0:
+                self._sleep(wait)
+
+            try:
+                return func(*args, **kwargs)
+            finally:
+                self._next_allowed_at = self._clock() + self._min_interval
+
+
+class _SlidingWindowRateLimiter:
+    """Allow short bursts while capping the call rate over a fixed window."""
+
+    def __init__(
+        self,
+        *,
+        max_calls: int,
+        period: float,
+        clock=time.monotonic,
+        sleep=time.sleep,
+    ) -> None:
+        self._max_calls = max_calls
+        self._period = period
+        self._clock = clock
+        self._sleep = sleep
+        self._lock = threading.Lock()
+        self._starts: deque[float] = deque()
+
+    def run(self, func, *args, **kwargs):
+        while True:
+            with self._lock:
+                now = self._clock()
+                while self._starts and now - self._starts[0] >= self._period:
+                    self._starts.popleft()
+
+                if len(self._starts) < self._max_calls:
+                    self._starts.append(now)
+                    break
+
+                wait = self._period - (now - self._starts[0])
+
+            if wait > 0:
+                self._sleep(wait)
+
+        return func(*args, **kwargs)
+
+
+_ARXIV_METADATA_LIMITER = _SerializedRateLimiter(
+    min_interval=_ARXIV_METADATA_MIN_INTERVAL,
+)
+_ARXIV_PDF_LIMITER = _SlidingWindowRateLimiter(
+    max_calls=_ARXIV_PDF_MAX_DOWNLOADS,
+    period=_ARXIV_PDF_WINDOW_SECONDS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +233,28 @@ def _zotero_key(length: int = 8) -> str:
     return "".join(random.choices(chars, k=length))
 
 
+def _read_response_text(req: urllib.request.Request, *, timeout: int) -> str:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8")
+
+
+def _retrieve_url(url: str, dest_path: str) -> None:
+    urllib.request.urlretrieve(url, dest_path)
+
+
+def _is_arxiv_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).hostname or ""
+    return host == "arxiv.org" or host.endswith(".arxiv.org")
+
+
+def _download_with_rate_limit(url: str, dest_path: str) -> None:
+    if _is_arxiv_url(url):
+        _ARXIV_PDF_LIMITER.run(_retrieve_url, url, dest_path)
+        return
+
+    _retrieve_url(url, dest_path)
+
+
 def _find_parent_key_by_title(title: str) -> str:
     """Find the most recently added item matching a title via read-only DB."""
     try:
@@ -200,7 +302,7 @@ def _download_pdf(pdf_url: str, filename: str) -> tuple[str, Path, int] | None:
     tmp = ""
     try:
         tmp = tempfile.mktemp(suffix=".pdf")
-        urllib.request.urlretrieve(pdf_url, tmp)
+        _download_with_rate_limit(pdf_url, tmp)
         file_size = os.path.getsize(tmp)
         if file_size < 1000:
             os.unlink(tmp)
@@ -232,8 +334,7 @@ def _fetch_arxiv_metadata(arxiv_id: str) -> dict:
 
     url = f"{ARXIV_API_URL}?id_list={base_id}"
     req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        body = resp.read().decode("utf-8")
+    body = _ARXIV_METADATA_LIMITER.run(_read_response_text, req, timeout=15)
 
     root = ElementTree.fromstring(body)
     entry = root.find(f"{_ATOM}entry")
