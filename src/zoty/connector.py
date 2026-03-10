@@ -13,6 +13,7 @@ import sqlite3
 import string
 import sys
 import tempfile
+import time
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -31,6 +32,8 @@ _ATOM = "{http://www.w3.org/2005/Atom}"
 _ZOTERO_DIR = Path.home() / "Zotero"
 _ZOTERO_STORAGE = _ZOTERO_DIR / "storage"
 _ZOTERO_DB = _ZOTERO_DIR / "zotero.sqlite"
+_COLLECTION_ASSIGN_RETRIES = 3
+_COLLECTION_ASSIGN_RETRY_DELAY = 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +72,56 @@ def _add_to_collection_via_rdp(item_key: str, collection_key: str) -> dict:
 
     result = execute_js(js)
     return _parse_rdp_result(result)
+
+
+def _should_retry_collection_assignment(
+    *,
+    result: dict | None = None,
+    error: BridgeError | None = None,
+) -> bool:
+    """Retry only the transient bridge failures seen after attachment."""
+    if error is not None:
+        message = str(error)
+        return "HTTP Error 400" in message or "Bad Request" in message
+
+    return bool(result) and result.get("error") == "not found"
+
+
+def _add_to_collection_with_retry(
+    item_key: str,
+    collection_key: str,
+    *,
+    attempts: int = _COLLECTION_ASSIGN_RETRIES,
+    delay: float = _COLLECTION_ASSIGN_RETRY_DELAY,
+) -> dict:
+    """Retry brief collection-assignment races while Zotero state settles."""
+    last_result: dict | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            result = _add_to_collection_via_rdp(item_key, collection_key)
+        except BridgeError as e:
+            if attempt < attempts and _should_retry_collection_assignment(error=e):
+                print(
+                    f"zoty: retrying collection assignment for {item_key} after bridge error: {e}",
+                    file=sys.stderr,
+                )
+                time.sleep(delay * attempt)
+                continue
+            raise
+
+        last_result = result
+        if attempt < attempts and _should_retry_collection_assignment(result=result):
+            print(
+                f"zoty: retrying collection assignment for {item_key} after bridge response: {result}",
+                file=sys.stderr,
+            )
+            time.sleep(delay * attempt)
+            continue
+
+        return result
+
+    return last_result or {"error": "collection assignment failed"}
 
 
 def _parse_rdp_result(bridge_response: dict) -> dict:
@@ -408,7 +461,7 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
         collection_added = False
         if collection_key and parent_key:
             try:
-                coll_result = _add_to_collection_via_rdp(parent_key, collection_key)
+                coll_result = _add_to_collection_with_retry(parent_key, collection_key)
                 if coll_result.get("error"):
                     print(f"zoty: bridge collection error: {coll_result}", file=sys.stderr)
                 else:
