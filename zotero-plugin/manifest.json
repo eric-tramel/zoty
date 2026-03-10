@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Zoty Bridge",
+  "version": "0.2.0",
+  "description": "Activates the Gecko DevTools Server for remote JavaScript execution via RDP.",
+  "applications": {
+    "zotero": {
+      "id": "zoty-bridge@zoty.dev",
+      "update_url": "https://raw.githubusercontent.com/etramel/zoty/main/zotero-plugin/update.json",
+      "strict_min_version": "6.999",
+      "strict_max_version": "7.0.*"
+    }
+  },
+  "author": "zoty"
+}

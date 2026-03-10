@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "zoty"
+version = "0.1.0"
+description = "Lightweight Zotero MCP server for AI agent interaction"
+requires-python = ">=3.10"
+dependencies = ["mcp", "bm25s", "pyzotero"]
+license = "MIT"
+readme = "README.md"
+authors = [{name = "Eric Tramel"}]
+keywords = ["zotero", "mcp", "ai", "research", "bibliography"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/etramel/zoty"
+Repository = "https://github.com/etramel/zoty"
+
+[project.scripts]
+zoty = "zoty:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zoty"]
