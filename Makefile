@@ -3,9 +3,7 @@
 PYTHON := $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else command -v python3; fi)
 XPI := zotero-plugin/dist/zoty-bridge.xpi
 
-build: $(XPI)
-
-$(XPI): zotero-plugin/manifest.json zotero-plugin/bootstrap.js zotero-plugin/build.sh
+build:
 	bash zotero-plugin/build.sh
 
 test:
