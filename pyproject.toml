@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zoty"
-version = "0.1.2"
+version = "0.1.3"
 description = "Lightweight Zotero MCP server for AI agent interaction"
 requires-python = ">=3.10"
 dependencies = ["mcp", "bm25s", "pyzotero"]
@@ -24,8 +24,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/etramel/zoty"
-Repository = "https://github.com/etramel/zoty"
+Homepage = "https://github.com/eric-tramel/zoty"
+Repository = "https://github.com/eric-tramel/zoty"
 
 [project.scripts]
 zoty = "zoty:main"

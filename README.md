@@ -68,6 +68,18 @@ Install persistently:
 uv tool install zoty
 ```
 
+Upgrade an installed copy:
+
+```bash
+uv tool upgrade zoty
+```
+
+If you run zoty with `uvx` instead of installing it, refresh to the latest published version with:
+
+```bash
+uvx --refresh zoty
+```
+
 From a local checkout:
 
 ```bash
