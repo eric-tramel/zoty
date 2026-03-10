@@ -13,43 +13,68 @@ MCP server that connects AI agents to your local Zotero library. Provides 6 tool
 - Zotero local API enabled: Zotero Settings > Advanced > Config Editor > set `extensions.zotero.httpServer.localAPI.enabled` to `true`
 - [Zoty Bridge plugin](#zoty-bridge-plugin) installed (for PDF attachment and collection assignment)
 
-## Install
-
-```bash
-# Install as a uv tool (recommended)
-uvx --from git+https://github.com/etramel/zoty zoty
-
-# Or from a local checkout
-uv tool install .
-```
+## Add to Your Agent
 
 ### Claude Code
 
-Add to `.mcp.json` or `~/.claude/settings.json`:
+Add from the command line:
 
-```json
-{
-  "mcpServers": {
-    "zoty": {
-      "command": "zoty"
-    }
-  }
-}
+```bash
+claude mcp add zoty -- uvx zoty
 ```
 
-### Claude Desktop
-
-Add to your Claude Desktop MCP config:
+Add to your `.mcp.json` or `~/.claude/settings.json`:
 
 ```json
 {
   "mcpServers": {
     "zoty": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/etramel/zoty", "zoty"]
+      "args": ["zoty"]
     }
   }
 }
+```
+
+### Codex
+
+Add from the command line:
+
+```bash
+codex mcp add zoty -- uvx zoty
+```
+
+Add to your `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.zoty]
+command = "uvx"
+args = ["zoty"]
+```
+
+## Installation
+
+Requires [uv](https://docs.astral.sh/uv/).
+
+Run without installing (recommended for MCP setups):
+
+```bash
+uvx zoty
+```
+
+Install persistently:
+
+```bash
+uv tool install zoty
+```
+
+From a local checkout:
+
+```bash
+uv run zoty
+
+# Or install from source as a tool
+uv tool install .
 ```
 
 ## Zoty Bridge Plugin
@@ -58,7 +83,7 @@ A tiny Zotero 7 plugin that lets zoty execute JavaScript inside Zotero's privile
 
 ### Install the plugin
 
-1. Download `zoty-bridge.xpi` from [releases](https://github.com/etramel/zoty/releases), or build it yourself:
+1. Download `zoty-bridge.xpi` from [releases](https://github.com/eric-tramel/zoty/releases), or build it yourself:
    ```bash
    make build
    ```
