@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
+from pathlib import Path
+import sqlite3
 import sys
 import threading
 from typing import Any
+import urllib.parse
 
 import bm25s
 from pyzotero import zotero
@@ -16,6 +20,9 @@ _index_lock = threading.Lock()
 _bm25_retriever: bm25s.BM25 | None = None
 _corpus: list[dict] = []
 _zot: zotero.Zotero | None = None
+_ZOTERO_DIR = Path.home() / "Zotero"
+_ZOTERO_STORAGE = _ZOTERO_DIR / "storage"
+_ZOTERO_DB = _ZOTERO_DIR / "zotero.sqlite"
 
 
 def _get_zot() -> zotero.Zotero:
@@ -40,7 +47,70 @@ def _format_creators(creators: list[dict]) -> list[str]:
     return names
 
 
-def _item_to_dict(item: dict, truncate_abstract: int = 0) -> dict:
+def _resolve_attachment_filepath(attachment_key: str, raw_path: str) -> str:
+    """Resolve a Zotero attachment path into a local filesystem path."""
+    stored_path = raw_path.strip()
+    if not stored_path:
+        return ""
+
+    if stored_path.startswith("storage:"):
+        filename = stored_path.removeprefix("storage:")
+        return str(_ZOTERO_STORAGE / attachment_key / filename)
+
+    if stored_path.startswith("file://"):
+        parsed = urllib.parse.urlparse(stored_path)
+        return urllib.parse.unquote(parsed.path)
+
+    return stored_path
+
+
+def _get_item_attachments(item_key: str) -> list[dict]:
+    """Return attachment metadata and resolved filepaths for one parent item."""
+    key = item_key.strip()
+    if not key:
+        return []
+
+    try:
+        with closing(sqlite3.connect(f"file:{_ZOTERO_DB}?immutable=1", uri=True)) as db:
+            cur = db.cursor()
+            cur.execute(
+                """SELECT child.key,
+                          COALESCE(MAX(CASE WHEN f.fieldName = 'title' THEN idv.value END), ''),
+                          ia.contentType,
+                          ia.linkMode,
+                          ia.path
+                   FROM items parent
+                   JOIN itemAttachments ia ON parent.itemID = ia.parentItemID
+                   JOIN items child ON ia.itemID = child.itemID
+                   LEFT JOIN itemData id ON child.itemID = id.itemID
+                   LEFT JOIN itemDataValues idv ON id.valueID = idv.valueID
+                   LEFT JOIN fields f ON id.fieldID = f.fieldID
+                   WHERE parent.key = ?
+                   GROUP BY child.key, ia.contentType, ia.linkMode, ia.path, child.dateAdded
+                   ORDER BY child.dateAdded ASC""",
+                (key,),
+            )
+            rows = cur.fetchall()
+    except Exception:
+        return []
+
+    attachments = []
+    for attachment_key, title, content_type, link_mode, raw_path in rows:
+        filepath = _resolve_attachment_filepath(attachment_key, raw_path or "")
+        if not filepath:
+            continue
+        attachments.append({
+            "key": attachment_key,
+            "title": title,
+            "contentType": content_type or "",
+            "linkMode": link_mode,
+            "filepath": filepath,
+        })
+
+    return attachments
+
+
+def _item_to_dict(item: dict, truncate_abstract: int = 0, *, include_attachments: bool = False) -> dict:
     """Convert a pyzotero item to a concise dict for tool output."""
     data = item.get("data", {})
     abstract = data.get("abstractNote", "")
@@ -50,7 +120,7 @@ def _item_to_dict(item: dict, truncate_abstract: int = 0) -> dict:
     collections = data.get("collections", [])
     tags = [t.get("tag", "") for t in data.get("tags", []) if t.get("tag")]
 
-    return {
+    result = {
         "key": data.get("key", ""),
         "itemType": data.get("itemType", ""),
         "title": data.get("title", ""),
@@ -62,6 +132,11 @@ def _item_to_dict(item: dict, truncate_abstract: int = 0) -> dict:
         "collections": collections,
         "abstract": abstract,
     }
+
+    if include_attachments:
+        result["attachments"] = _get_item_attachments(data.get("key", ""))
+
+    return result
 
 
 _SKIP_TYPES = {"attachment", "note", "annotation"}
@@ -159,7 +234,7 @@ def search(
             continue
 
         search_results.append({
-            **_item_to_dict(item, truncate_abstract=500),
+            **_item_to_dict(item, truncate_abstract=500, include_attachments=True),
             "score": round(score, 4),
         })
 
@@ -222,7 +297,7 @@ def get_item(item_key: str) -> str:
     except Exception as e:
         return json.dumps({"error": f"Failed to fetch item {item_key}: {e}"})
 
-    return json.dumps(_item_to_dict(item, truncate_abstract=0))
+    return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
 
 
 def get_recent_items(limit: int = 10) -> str:

@@ -108,12 +108,12 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | BM25-ranked search over item titles and abstracts |
+| `search_library` | BM25-ranked search over item titles and abstracts, including attachment filepaths |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
-| `get_item` | Full metadata for a single item by key |
+| `get_item` | Full metadata for a single item by key, including attachment filepaths |
 | `get_recent_items` | Recently added items, sorted by date |
-| `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download |
+| `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
 
 ## How it works
 

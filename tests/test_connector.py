@@ -1,4 +1,9 @@
+from contextlib import closing
+import json
+import sqlite3
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from zoty import connector
@@ -175,6 +180,214 @@ class CollectionAssignmentRetryTests(unittest.TestCase):
 
         self.assertEqual(add_mock.call_count, 1)
         sleep_mock.assert_not_called()
+
+
+class CollectionDuplicateDetectionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_db = connector._ZOTERO_DB
+        connector._ZOTERO_DB = Path(self.temp_dir.name) / "zotero.sqlite"
+
+        with closing(sqlite3.connect(connector._ZOTERO_DB)) as db:
+            db.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    dateAdded TEXT NOT NULL
+                );
+                CREATE TABLE fields (
+                    fieldID INTEGER PRIMARY KEY,
+                    fieldName TEXT NOT NULL
+                );
+                CREATE TABLE itemDataValues (
+                    valueID INTEGER PRIMARY KEY,
+                    value TEXT UNIQUE
+                );
+                CREATE TABLE itemData (
+                    itemID INTEGER NOT NULL,
+                    fieldID INTEGER NOT NULL,
+                    valueID INTEGER NOT NULL
+                );
+                CREATE TABLE collections (
+                    collectionID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL
+                );
+                CREATE TABLE collectionItems (
+                    collectionID INTEGER NOT NULL,
+                    itemID INTEGER NOT NULL
+                );
+                """
+            )
+            db.executemany(
+                "INSERT INTO fields(fieldID, fieldName) VALUES (?, ?)",
+                [
+                    (1, "title"),
+                    (59, "DOI"),
+                    (97, "archiveID"),
+                ],
+            )
+            db.execute("INSERT INTO collections(collectionID, key) VALUES (?, ?)", (1, "COLL123"))
+            db.commit()
+
+    def tearDown(self):
+        connector._ZOTERO_DB = self.original_db
+        self.temp_dir.cleanup()
+
+    def _insert_item(
+        self,
+        *,
+        item_id: int,
+        key: str,
+        title: str,
+        date_added: str,
+        archive_id: str = "",
+        doi: str = "",
+        collection_id: int = 1,
+    ) -> None:
+        with closing(sqlite3.connect(connector._ZOTERO_DB)) as db:
+            db.execute(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                (item_id, key, date_added),
+            )
+            db.execute(
+                "INSERT INTO collectionItems(collectionID, itemID) VALUES (?, ?)",
+                (collection_id, item_id),
+            )
+
+            values = [(item_id * 10 + 1, title)]
+            if archive_id:
+                values.append((item_id * 10 + 2, archive_id))
+            if doi:
+                values.append((item_id * 10 + 3, doi))
+
+            db.executemany(
+                "INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)",
+                values,
+            )
+            db.execute(
+                "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                (item_id, 1, item_id * 10 + 1),
+            )
+            if archive_id:
+                db.execute(
+                    "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                    (item_id, 97, item_id * 10 + 2),
+                )
+            if doi:
+                db.execute(
+                    "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                    (item_id, 59, item_id * 10 + 3),
+                )
+            db.commit()
+
+    def test_finds_existing_item_by_title_within_collection(self):
+        self._insert_item(
+            item_id=1,
+            key="ITEM123",
+            title="Example Title",
+            date_added="2026-03-10 10:00:00",
+        )
+
+        result = connector._find_existing_item_in_collection(
+            "Example Title",
+            "COLL123",
+        )
+
+        self.assertEqual(result, ("ITEM123", "Example Title"))
+
+    def test_finds_existing_item_by_normalized_arxiv_id_within_collection(self):
+        self._insert_item(
+            item_id=2,
+            key="ITEM456",
+            title="Different Stored Title",
+            date_added="2026-03-10 11:00:00",
+            archive_id="arXiv:1234.5678",
+        )
+
+        result = connector._find_existing_item_in_collection(
+            "Fresh Metadata Title",
+            "COLL123",
+            arxiv_id="arxiv:1234.5678v2",
+        )
+
+        self.assertEqual(result, ("ITEM456", "Different Stored Title"))
+
+    def test_add_paper_short_circuits_before_arxiv_fetch_for_existing_collection_item(self):
+        self._insert_item(
+            item_id=3,
+            key="ITEMFAST",
+            title="Stored Title",
+            date_added="2026-03-10 12:00:00",
+            archive_id="arXiv:1234.5678",
+        )
+
+        with (
+            patch("zoty.connector._fetch_arxiv_metadata") as fetch_mock,
+            patch("zoty.connector._push_to_connector") as push_mock,
+        ):
+            result = json.loads(
+                connector.add_paper(arxiv_id="arxiv:1234.5678v2", collection_key="COLL123")
+            )
+
+        self.assertEqual(result["status"], "already in collection")
+        self.assertEqual(result["title"], "Stored Title")
+        self.assertEqual(result["key"], "ITEMFAST")
+        self.assertEqual(result["collection_key"], "COLL123")
+        fetch_mock.assert_not_called()
+        push_mock.assert_not_called()
+
+    def test_add_paper_short_circuits_before_doi_fetch_for_existing_collection_item(self):
+        self._insert_item(
+            item_id=4,
+            key="ITEMDOI",
+            title="DOI Title",
+            date_added="2026-03-10 12:30:00",
+            doi="10.1000/example",
+        )
+
+        with (
+            patch("zoty.connector._fetch_crossref_metadata") as fetch_mock,
+            patch("zoty.connector._push_to_connector") as push_mock,
+        ):
+            result = json.loads(
+                connector.add_paper(doi="doi:10.1000/example", collection_key="COLL123")
+            )
+
+        self.assertEqual(result["status"], "already in collection")
+        self.assertEqual(result["title"], "DOI Title")
+        self.assertEqual(result["key"], "ITEMDOI")
+        self.assertEqual(result["collection_key"], "COLL123")
+        fetch_mock.assert_not_called()
+        push_mock.assert_not_called()
+
+    def test_add_paper_returns_already_in_collection_after_metadata_lookup_without_creating_duplicate(self):
+        item = {
+            "title": "Example Title",
+            "creators": [{"firstName": "Jane", "lastName": "Example"}],
+            "date": "2026-03-10",
+            "itemType": "preprint",
+            "archiveID": "arXiv:1234.5678",
+            "url": "https://arxiv.org/abs/1234.5678",
+        }
+
+        with (
+            patch("zoty.connector._fetch_arxiv_metadata", return_value=item),
+            patch(
+                "zoty.connector._find_existing_item_in_collection",
+                side_effect=[("", ""), ("ITEM789", "Example Title")],
+            ),
+            patch("zoty.connector._push_to_connector") as push_mock,
+        ):
+            result = json.loads(
+                connector.add_paper(arxiv_id="1234.5678", collection_key="COLL123")
+            )
+
+        self.assertEqual(result["status"], "already in collection")
+        self.assertEqual(result["title"], "Example Title")
+        self.assertEqual(result["key"], "ITEM789")
+        self.assertEqual(result["collection_key"], "COLL123")
+        push_mock.assert_not_called()
 
 
 if __name__ == "__main__":

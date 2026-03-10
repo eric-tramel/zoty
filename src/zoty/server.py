@@ -30,7 +30,8 @@ def search_library(
         limit: Maximum results to return (default: 10)
 
     Returns:
-        JSON with ranked search results including title, creators, date, score, and truncated abstract.
+        JSON with ranked search results including title, creators, date, score,
+        truncated abstract, and attachment filepaths when local attachments exist.
     """
     return db.search(query, collection_key=collection_key, item_type=item_type, limit=limit)
 
@@ -67,7 +68,8 @@ def get_item(item_key: str) -> str:
         item_key: The Zotero item key
 
     Returns:
-        JSON with complete item metadata including title, creators, abstract, date, DOI, URL, tags, and collections.
+        JSON with complete item metadata including title, creators, abstract,
+        date, DOI, URL, tags, collections, and attachment filepaths.
     """
     return db.get_item(item_key)
 
@@ -100,7 +102,9 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
         collection_key: Optional Zotero collection key to add the paper to (from list_collections)
 
     Returns:
-        JSON with the created item's metadata on success, or an error message.
+        JSON with the created item's metadata on success, an "already in collection"
+        status when an exact duplicate is already present in the target collection,
+        or an error message.
     """
     return connector.add_paper(arxiv_id=arxiv_id, doi=doi, collection_key=collection_key)
 

@@ -7,6 +7,7 @@ HTTP endpoint, which executes JavaScript inside Zotero's privileged context.
 from __future__ import annotations
 
 from collections import deque
+from contextlib import closing
 import json
 import os
 import random
@@ -255,25 +256,132 @@ def _download_with_rate_limit(url: str, dest_path: str) -> None:
     _retrieve_url(url, dest_path)
 
 
-def _find_parent_key_by_title(title: str) -> str:
-    """Find the most recently added item matching a title via read-only DB."""
+def _normalize_arxiv_id(arxiv_id: str) -> str:
+    arxiv_id = arxiv_id.strip()
+    for prefix in (
+        "arxiv:",
+        "arXiv:",
+        "https://arxiv.org/abs/",
+        "http://arxiv.org/abs/",
+        "https://arxiv.org/pdf/",
+        "http://arxiv.org/pdf/",
+    ):
+        if arxiv_id.startswith(prefix):
+            arxiv_id = arxiv_id[len(prefix):]
+    arxiv_id = arxiv_id.removesuffix(".pdf").rstrip("/")
+    return arxiv_id.split("v")[0] if "v" in arxiv_id else arxiv_id
+
+
+def _normalize_doi(doi: str) -> str:
+    doi = doi.strip()
+    for prefix in ("doi:", "https://doi.org/", "http://doi.org/"):
+        if doi.lower().startswith(prefix):
+            doi = doi[len(prefix):]
+    return doi.rstrip("/")
+
+
+def _find_item_key_by_field(field_name: str, field_value: str, *, collection_key: str = "") -> str:
+    """Find the newest item matching an exact field value, optionally in one collection."""
+    value = field_value.strip()
+    if not value:
+        return ""
+
     try:
-        db = sqlite3.connect(f"file:{_ZOTERO_DB}?immutable=1", uri=True)
-        cur = db.cursor()
-        cur.execute(
-            """SELECT i.key FROM items i
+        with closing(sqlite3.connect(f"file:{_ZOTERO_DB}?immutable=1", uri=True)) as db:
+            cur = db.cursor()
+            joins = ""
+            where_clauses = ["f.fieldName = ?", "idv.value = ?"]
+            params = [field_name, value]
+
+            if collection_key:
+                joins = """JOIN collectionItems ci ON i.itemID = ci.itemID
+               JOIN collections c ON ci.collectionID = c.collectionID
+               """
+                where_clauses.insert(0, "c.key = ?")
+                params.insert(0, collection_key)
+
+            cur.execute(
+                f"""SELECT i.key FROM items i
+               {joins}
                JOIN itemData id ON i.itemID = id.itemID
                JOIN itemDataValues idv ON id.valueID = idv.valueID
                JOIN fields f ON id.fieldID = f.fieldID
-               WHERE f.fieldName = 'title' AND idv.value = ?
+               WHERE {' AND '.join(where_clauses)}
                ORDER BY i.dateAdded DESC LIMIT 1""",
-            (title,),
-        )
-        row = cur.fetchone()
-        db.close()
+                params,
+            )
+            row = cur.fetchone()
         return row[0] if row else ""
     except Exception:
         return ""
+
+
+def _find_item_field_by_key(item_key: str, field_name: str) -> str:
+    """Return an exact field value for one Zotero item key."""
+    key = item_key.strip()
+    if not key:
+        return ""
+
+    try:
+        with closing(sqlite3.connect(f"file:{_ZOTERO_DB}?immutable=1", uri=True)) as db:
+            cur = db.cursor()
+            cur.execute(
+                """SELECT idv.value FROM items i
+               JOIN itemData id ON i.itemID = id.itemID
+               JOIN itemDataValues idv ON id.valueID = idv.valueID
+               JOIN fields f ON id.fieldID = f.fieldID
+               WHERE i.key = ? AND f.fieldName = ?
+               LIMIT 1""",
+                (key, field_name),
+            )
+            row = cur.fetchone()
+        return row[0] if row else ""
+    except Exception:
+        return ""
+
+
+def _find_existing_item_in_collection(
+    title: str,
+    collection_key: str,
+    *,
+    arxiv_id: str = "",
+    doi: str = "",
+) -> tuple[str, str]:
+    """Return (item key, title) if the target collection already has this paper."""
+    if not collection_key:
+        return "", ""
+
+    normalized_arxiv_id = _normalize_arxiv_id(arxiv_id)
+    if normalized_arxiv_id:
+        archive_id = f"arXiv:{normalized_arxiv_id}"
+        existing_key = _find_item_key_by_field(
+            "archiveID",
+            archive_id,
+            collection_key=collection_key,
+        )
+        if existing_key:
+            return existing_key, _find_item_field_by_key(existing_key, "title")
+
+    normalized_doi = _normalize_doi(doi)
+    if normalized_doi:
+        existing_key = _find_item_key_by_field(
+            "DOI",
+            normalized_doi,
+            collection_key=collection_key,
+        )
+        if existing_key:
+            return existing_key, _find_item_field_by_key(existing_key, "title")
+
+    existing_key = _find_item_key_by_field("title", title, collection_key=collection_key)
+    if existing_key:
+        return existing_key, _find_item_field_by_key(existing_key, "title") or title.strip()
+
+    return "", ""
+
+
+def _find_parent_key_by_title(title: str) -> str:
+    """Find the most recently added item matching a title via read-only DB."""
+    return _find_item_key_by_field("title", title)
 
 
 def _make_pdf_filename(creators: list[dict], date: str, title: str) -> str:
@@ -326,11 +434,7 @@ def _download_pdf(pdf_url: str, filename: str) -> tuple[str, Path, int] | None:
 # ---------------------------------------------------------------------------
 
 def _fetch_arxiv_metadata(arxiv_id: str) -> dict:
-    arxiv_id = arxiv_id.strip()
-    for prefix in ("arxiv:", "arXiv:", "https://arxiv.org/abs/", "http://arxiv.org/abs/"):
-        if arxiv_id.startswith(prefix):
-            arxiv_id = arxiv_id[len(prefix):]
-    base_id = arxiv_id.split("v")[0] if "v" in arxiv_id else arxiv_id
+    base_id = _normalize_arxiv_id(arxiv_id)
 
     url = f"{ARXIV_API_URL}?id_list={base_id}"
     req = urllib.request.Request(url)
@@ -402,10 +506,7 @@ def _find_pdf_for_doi(doi: str) -> str:
 
 
 def _fetch_crossref_metadata(doi: str) -> dict:
-    doi = doi.strip()
-    for prefix in ("doi:", "https://doi.org/", "http://doi.org/"):
-        if doi.lower().startswith(prefix):
-            doi = doi[len(prefix):]
+    doi = _normalize_doi(doi)
 
     url = f"{CROSSREF_API_URL}/{doi}"
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -515,12 +616,40 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
         return json.dumps({"error": "Provide at least one of arxiv_id or doi"})
 
     try:
+        existing_key, existing_title = _find_existing_item_in_collection(
+            "",
+            collection_key,
+            arxiv_id=arxiv_id,
+            doi=doi,
+        )
+        if existing_key:
+            return json.dumps({
+                "status": "already in collection",
+                "title": existing_title,
+                "key": existing_key,
+                "collection_key": collection_key,
+            })
+
         if arxiv_id:
             item = _fetch_arxiv_metadata(arxiv_id)
             source_url = item.get("url", "")
         else:
             item = _fetch_crossref_metadata(doi)
             source_url = item.get("url", "")
+
+        existing_key, existing_title = _find_existing_item_in_collection(
+            item.get("title", ""),
+            collection_key,
+            arxiv_id=item.get("archiveID", ""),
+            doi=item.get("DOI", ""),
+        )
+        if existing_key:
+            return json.dumps({
+                "status": "already in collection",
+                "title": existing_title or item.get("title", ""),
+                "key": existing_key,
+                "collection_key": collection_key,
+            })
 
         # Create the metadata item via connector
         _push_to_connector(item, source_url)
