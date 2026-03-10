@@ -60,7 +60,7 @@ A tiny Zotero 7 plugin that lets zoty execute JavaScript inside Zotero's privile
 
 1. Download `zoty-bridge.xpi` from [releases](https://github.com/etramel/zoty/releases), or build it yourself:
    ```bash
-   cd zotero-plugin && bash build.sh
+   make build
    ```
 2. In Zotero: Tools > Add-ons > gear icon > Install Add-on From File > select the `.xpi`
 3. Restart Zotero
@@ -83,6 +83,13 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 Read operations go through [pyzotero](https://github.com/urschrei/pyzotero) against Zotero's local API (`localhost:23119`). The BM25 search index builds in a background thread at startup so the MCP handshake completes immediately.
 
 Write operations use the Zotero connector endpoint (`/connector/saveItems`) to create metadata items. PDF attachment and collection assignment go through the zoty-bridge plugin, which executes JavaScript in Zotero's privileged context. This two-path design exists because Zotero's SQLite database uses exclusive locking -- external processes can read it (immutable mode) but not write to it while Zotero is running.
+
+## Development
+
+```bash
+make build   # build zotero-plugin/dist/zoty-bridge.xpi
+make test    # run Python unit tests
+```
 
 ## License
 
