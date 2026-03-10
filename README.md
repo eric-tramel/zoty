@@ -89,6 +89,22 @@ uv run zoty
 uv tool install .
 ```
 
+## PDF Reading Advice for Agents
+
+For best results when coding agents open attachment filepaths from zoty, make sure `poppler` and the associated Poppler utilities are installed on the machine. In practice this usually means tools like `pdftotext`, `pdfinfo`, and `pdftoppm` are available on `PATH`.
+
+This is especially important for Claude Code, which uses these utilities to read PDF pages efficiently. Without them, agents may still be able to open the PDF files themselves, but page extraction tends to be slower and less reliable.
+
+Typical installs:
+
+```bash
+# macOS
+brew install poppler
+
+# Ubuntu / Debian
+sudo apt-get install poppler-utils
+```
+
 ## Zoty Bridge Plugin
 
 A tiny Zotero 7 plugin that lets zoty execute JavaScript inside Zotero's privileged context. This is needed for operations that can't go through the REST API: PDF attachment and collection assignment both require writing to Zotero's SQLite database, which locks out external processes. The bridge sidesteps this by running JS inside Zotero itself.
