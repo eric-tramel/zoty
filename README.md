@@ -2,6 +2,8 @@
 
 Lightweight Zotero MCP server for AI agents.
 
+[![Watch the Zoty demo](https://raw.githubusercontent.com/eric-tramel/zoty/main/assets/zoty-demo-poster.png)](https://raw.githubusercontent.com/eric-tramel/zoty/main/assets/zoty-demo.mp4)
+
 ## What it does
 
 MCP server that connects AI agents to your local Zotero library. Provides 6 tools: BM25-ranked search over titles and abstracts, collection browsing, item lookup, and paper ingestion by arXiv ID or DOI with automatic PDF attachment.
