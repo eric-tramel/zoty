@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zoty"
-version = "0.1.4"
+version = "0.1.5"
 description = "Lightweight Zotero MCP server for AI agent interaction"
 requires-python = ">=3.10"
 dependencies = ["mcp", "bm25s", "pyzotero"]
