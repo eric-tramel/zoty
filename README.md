@@ -9,7 +9,7 @@ MCP server that connects AI agents to your local Zotero library. Provides 6 tool
 ## Requirements
 
 - Python 3.10+
-- Zotero 7 desktop running
+- Zotero desktop running (Zotero 8 is the default target; Zotero 7 is also supported)
 - Zotero local API enabled: Zotero Settings > Advanced > Config Editor > set `extensions.zotero.httpServer.localAPI.enabled` to `true`
 - [Zoty Bridge plugin](#zoty-bridge-plugin) installed (for PDF attachment and collection assignment)
 
@@ -107,7 +107,7 @@ sudo apt-get install poppler-utils
 
 ## Zoty Bridge Plugin
 
-A tiny Zotero 7 plugin that lets zoty execute JavaScript inside Zotero's privileged context. This is needed for operations that can't go through the REST API: PDF attachment and collection assignment both require writing to Zotero's SQLite database, which locks out external processes. The bridge sidesteps this by running JS inside Zotero itself.
+A tiny Zotero 7/8 plugin that lets zoty execute JavaScript inside Zotero's privileged context. This is needed for operations that can't go through the REST API: PDF attachment and collection assignment both require writing to Zotero's SQLite database, which locks out external processes. The bridge sidesteps this by running JS inside Zotero itself.
 
 ### Install the plugin
 
