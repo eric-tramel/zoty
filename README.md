@@ -2,7 +2,7 @@
 
 Lightweight Zotero MCP server for AI agents.
 
-[![Watch the Zoty demo](https://raw.githubusercontent.com/eric-tramel/zoty/main/assets/zoty-demo-poster.png)](https://raw.githubusercontent.com/eric-tramel/zoty/main/assets/zoty-demo.mp4)
+[![Watch the Zoty demo](assets/zoty-demo-poster.png)](assets/zoty-demo.mp4)
 
 ## What it does
 
