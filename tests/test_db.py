@@ -1563,7 +1563,10 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["returned_count"], 1)
         self.assertEqual([row["key"] for row in result["items"]], ["PARENT2"])
-        self.assertEqual(result["items"][0]["collections"], ["COLL123"])
+        self.assertEqual(
+            result["items"][0]["collections"],
+            [{"key": "COLL123", "name": "Valid Collection"}],
+        )
 
     def test_search_keeps_same_title_items_distinct_without_doi_or_url(self):
         parents = {
