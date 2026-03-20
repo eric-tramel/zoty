@@ -44,6 +44,18 @@ class FakeRetriever:
         )
 
 
+class FakeResponse:
+    def __init__(self, *, status_code: int, url: str):
+        self.status_code = status_code
+        self.url = url
+
+
+class FakeHttpError(Exception):
+    def __init__(self, message: str, *, status_code: int, url: str):
+        super().__init__(message)
+        self.response = FakeResponse(status_code=status_code, url=url)
+
+
 class DbTestCase(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -277,28 +289,14 @@ class AttachmentPathsTests(DbTestCase):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item(""))
 
-        self.assertEqual(result["error"], "Provide item_key")
-        self.assertEqual(result["key"], "")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
+        self.assertEqual(result, {"error": "Provide item_key"})
         get_zot_mock.assert_not_called()
 
     def test_get_item_rejects_whitespace_only_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item("   "))
 
-        self.assertEqual(result["error"], "Provide item_key")
-        self.assertEqual(result["key"], "")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
+        self.assertEqual(result, {"error": "Provide item_key"})
         get_zot_mock.assert_not_called()
 
     def test_get_item_supports_single_key_via_item_keys_without_changing_shape(self):
@@ -333,14 +331,54 @@ class AttachmentPathsTests(DbTestCase):
         with patch("zoty.db._get_zot", return_value=zot):
             result = json.loads(db.get_item("PARENT1"))
 
-        self.assertEqual(result["key"], "PARENT1")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
-        self.assertIn("Failed to fetch item PARENT1: boom", result["error"])
+        self.assertEqual(
+            result,
+            {
+                "key": "PARENT1",
+                "error": "Failed to fetch item PARENT1: boom",
+            },
+        )
+
+    def test_get_item_sanitizes_http_not_found_errors(self):
+        zot = Mock()
+        zot.item.side_effect = FakeHttpError(
+            "GET http://localhost:23119/api/users/0/items/PARENT1 Code 404 Response: not found",
+            status_code=404,
+            url="http://localhost:23119/api/users/0/items/PARENT1",
+        )
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(
+            result,
+            {
+                "key": "PARENT1",
+                "error": "Item PARENT1 was not found",
+            },
+        )
+        self.assertNotIn("localhost", json.dumps(result))
+
+    def test_get_item_sanitizes_stringified_http_not_found_errors(self):
+        zot = Mock()
+        zot.item.side_effect = RuntimeError(
+            (
+                "Code: 404 URL: http://localhost:23119/api/users/0/items/PARENT1 "
+                "Method: GET Response:"
+            )
+        )
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(
+            result,
+            {
+                "key": "PARENT1",
+                "error": "Item PARENT1 was not found",
+            },
+        )
+        self.assertNotIn("localhost", json.dumps(result))
 
     def test_get_zot_creates_only_one_client_under_concurrent_first_access(self):
         barrier = threading.Barrier(8)
@@ -2040,6 +2078,9 @@ class CitationEntryTests(DbTestCase):
                     (
                         f"@article{{{item_key},\n"
                         "  title={Example},\n"
+                        "  author={Author 1 and Author 2 and Author 3 and Author 4 and Author 5 and "
+                        "Author 6 and Author 7 and Author 8 and Author 9 and Author 10 and Author 11},\n"
+                        f"  file={{PDF:{db._ZOTERO_STORAGE / item_key / 'paper.pdf'}:application/pdf}},\n"
                         "  abstract={Detailed summary with {nested} braces},\n"
                         "  year={2026}\n"
                         "}"
@@ -2069,7 +2110,14 @@ class CitationEntryTests(DbTestCase):
                     "key": "ITEM123",
                     "citation": "ITEM123 & cite",
                     "bibliography": "ITEM123 reference",
-                    "bibtex": "@article{ITEM123,\n  title={Example},\n  year={2026}\n}",
+                    "bibtex": (
+                        "@article{ITEM123,\n"
+                        "  title={Example},\n"
+                        "  author={Author 1 and Author 2 and Author 3 and Author 4 and Author 5 and "
+                        "Author 6 and Author 7 and Author 8 and Author 9 and Author 10 and others},\n"
+                        "  year={2026}\n"
+                        "}"
+                    ),
                 }
             ],
         )
@@ -2127,6 +2175,34 @@ class CitationEntryTests(DbTestCase):
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
 
+    def test_get_bibtex_and_citation_for_items_sanitizes_invalid_style_errors(self):
+        zot = Mock()
+        zot.item.side_effect = FakeHttpError(
+            "GET https://www.zotero.org/styles/not-a-style 404 Client Error",
+            status_code=404,
+            url="https://www.zotero.org/styles/not-a-style",
+        )
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_key="item123",
+                    style="not-a-style",
+                )
+            )
+
+        self.assertEqual(result["error"], "Citation style not-a-style was not found")
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "ITEM123",
+                    "error": "Citation style not-a-style was not found",
+                }
+            ],
+        )
+        self.assertNotIn("zotero.org/styles", json.dumps(result))
+
     def test_get_bibtex_and_citation_for_items_makes_one_export_call_per_item(self):
         zot = Mock()
         zot.item.return_value = {
@@ -2181,6 +2257,115 @@ class CitationEntryTests(DbTestCase):
         self.assertNotIn("errors", result)
         for item in result["items"]:
             self.assertNotIn("abstract", item["bibtex"].lower())
+
+    def test_get_bibtex_and_citation_for_items_strips_file_field_and_truncates_long_author_lists(self):
+        authors = " and ".join(
+            f"Author{index} Example"
+            for index in range(1, db._BIBTEX_MAX_AUTHORS + 4)
+        )
+
+        with patch(
+            "zoty.db._fetch_item_exports",
+            return_value={
+                "citation": "<span>cite</span>",
+                "bibliography": "<div>ref</div>",
+                "bibtex": (
+                    "@article{ITEM123,\n"
+                    f"  author={{{authors}}},\n"
+                    "  title={Example},\n"
+                    "  abstract={Detailed summary},\n"
+                    "  file={PDF:/Users/eric/Zotero/storage/6QDRGPA5/paper.pdf:application/pdf},\n"
+                    "  year={2026}\n"
+                    "}"
+                ),
+            },
+        ):
+            result = json.loads(db.get_bibtex_and_citation_for_items(item_key="item123"))
+
+        bibtex = result["items"][0]["bibtex"]
+        self.assertNotIn("abstract", bibtex.lower())
+        self.assertNotIn("file =", bibtex.lower())
+        self.assertNotIn("/Users/eric/Zotero/storage", bibtex)
+        self.assertIn("Author1 Example", bibtex)
+        self.assertIn(f"Author{db._BIBTEX_MAX_AUTHORS} Example", bibtex)
+        self.assertNotIn(f"Author{db._BIBTEX_MAX_AUTHORS + 1} Example", bibtex)
+        self.assertIn("and others", bibtex)
+
+    def test_get_bibtex_and_citation_for_items_sanitizes_item_not_found_http_errors(self):
+        with patch(
+            "zoty.db._fetch_item_exports",
+            side_effect=FakeHttpError(
+                (
+                    "Code: 404 URL: "
+                    "http://localhost:23119/api/users/0/items/MISSING"
+                    "?format=json&include=bib,citation,bibtex&style=apa&locale=en-US "
+                    "Method: GET Response: not found"
+                ),
+                status_code=404,
+                url=(
+                    "http://localhost:23119/api/users/0/items/MISSING"
+                    "?format=json&include=bib,citation,bibtex&style=apa&locale=en-US"
+                ),
+            ),
+        ):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_key="missing",
+                    style="apa",
+                    locale="en-US",
+                )
+            )
+
+        self.assertEqual(result["error"], "Item MISSING was not found")
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "MISSING",
+                    "error": "Item MISSING was not found",
+                }
+            ],
+        )
+        self.assertNotIn("localhost", json.dumps(result))
+
+    def test_get_bibtex_and_citation_for_items_sanitizes_invalid_style_http_errors(self):
+        with patch(
+            "zoty.db._fetch_item_exports",
+            side_effect=FakeHttpError(
+                (
+                    "Code: 404 URL: "
+                    "http://localhost:23119/api/users/0/items/ITEM123"
+                    "?format=json&include=bib,citation,bibtex&style=bad-style&locale=en-US "
+                    "Method: GET Response: Citation style not found: "
+                    "https://www.zotero.org/styles/bad-style"
+                ),
+                status_code=404,
+                url=(
+                    "http://localhost:23119/api/users/0/items/ITEM123"
+                    "?format=json&include=bib,citation,bibtex&style=bad-style&locale=en-US"
+                ),
+            ),
+        ):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_key="item123",
+                    style="bad-style",
+                    locale="en-US",
+                )
+            )
+
+        self.assertEqual(result["error"], "Citation style bad-style was not found")
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "ITEM123",
+                    "error": "Citation style bad-style was not found",
+                }
+            ],
+        )
+        self.assertNotIn("localhost", json.dumps(result))
+        self.assertNotIn("zotero.org/styles", json.dumps(result))
 
     def test_get_bibtex_and_citation_for_items_requires_at_least_one_key(self):
         result = json.loads(db.get_bibtex_and_citation_for_items())
