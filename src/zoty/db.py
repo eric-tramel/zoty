@@ -1780,11 +1780,10 @@ def _result_from_doc(
     doc: dict[str, Any],
     query_terms: list[str],
     attachments_by_key: dict[str, dict[str, Any]],
+    include_parent_key: bool,
 ) -> dict[str, Any]:
     snippet_source = doc["text"] if doc["doc_kind"] == "attachment_chunk" else (parent["abstract"] or doc["text"])
     result = {
-        "key": parent["key"],
-        "title": parent["title"],
         "itemType": parent["itemType"],
         "score": round(score, 4),
         "match_type": doc["doc_kind"],
@@ -1793,6 +1792,8 @@ def _result_from_doc(
         "char_start": doc["char_start"],
         "char_end": doc["char_end"],
     }
+    if include_parent_key:
+        result["key"] = parent["key"]
 
     if doc["doc_kind"] == "attachment_chunk":
         attachment = attachments_by_key.get(doc["attachment_key"], {})
@@ -2155,6 +2156,7 @@ def search_within_item(
                 doc=doc,
                 query_terms=query_terms,
                 attachments_by_key=attachments_lookup_by_parent.get(parent_key, {}),
+                include_parent_key=multi_item,
             ))
 
             if len(matches) >= limit:

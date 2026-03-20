@@ -1528,6 +1528,8 @@ class SearchBehaviorTests(DbTestCase):
             [row["match_type"] for row in result["matches"]],
             ["attachment_chunk", "attachment_chunk", "metadata"],
         )
+        self.assertNotIn("key", result["matches"][0])
+        self.assertNotIn("title", result["matches"][0])
         self.assertEqual(result["matches"][0]["attachment_key"], "ATTACH1")
         self.assertEqual(result["matches"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["matches"][2])
@@ -1678,6 +1680,8 @@ class SearchBehaviorTests(DbTestCase):
         )
         self.assertEqual(result["total"], 2)
         self.assertEqual([row["key"] for row in result["matches"]], ["PARENT2", "PARENT1"])
+        self.assertNotIn("title", result["matches"][0])
+        self.assertNotIn("title", result["matches"][1])
 
 
 class SnapshotLifecycleTests(DbTestCase):
