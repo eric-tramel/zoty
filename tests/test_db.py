@@ -1034,7 +1034,9 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("parent1", "query", limit=3))
 
         self.assertEqual(result["item_key"], "PARENT1")
-        self.assertEqual(result["item"]["key"], "PARENT1")
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "First Paper"})
+        self.assertNotIn("abstract", result["item"])
+        self.assertNotIn("attachments", result["item"])
         self.assertEqual(result["total"], 3)
         self.assertEqual(
             [row["match_type"] for row in result["results"]],
@@ -1044,23 +1046,8 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["results"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["results"][2])
 
-    def test_search_within_item_truncates_item_creator_list(self):
-        parents = {
-            "PARENT1": {
-                "key": "PARENT1",
-                "dateModified": "2026-03-10 10:00:00",
-                "itemType": "preprint",
-                "title": "First Paper",
-                "abstract": "First abstract with metadata match.",
-                "creators": [f"Author {index + 1}" for index in range(8)],
-                "collections": ["COLL123"],
-                "tags": [],
-                "date": "2026-03-10",
-                "DOI": "",
-                "url": "",
-            },
-        }
-        docs = [
+    def test_search_within_item_returns_lean_item_summary_when_query_has_no_terms(self):
+        self._install_search_state([
             ({
                 "doc_id": "meta:PARENT1",
                 "parent_key": "PARENT1",
@@ -1068,27 +1055,18 @@ class SearchBehaviorTests(DbTestCase):
                 "doc_kind": "metadata",
                 "chunk_index": 0,
                 "char_start": 0,
-                "char_end": 30,
-                "token_count": 4,
-                "text": "query match metadata",
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
                 "text_hash": "hash-1",
-            }, 7.5),
-        ]
-        self._install_search_state(docs, parents=parents)
+            }, 7.0),
+        ])
 
-        result = json.loads(db.search_within_item("parent1", "query", limit=3))
+        result = json.loads(db.search_within_item("parent1", "the and", limit=3))
 
-        self.assertEqual(
-            result["item"]["creators"],
-            [
-                "Author 1",
-                "Author 2",
-                "Author 3",
-                "Author 4",
-                "Author 5",
-                "... and 3 more",
-            ],
-        )
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
 
     def test_search_within_item_returns_error_for_unknown_item(self):
         self._install_search_state([
