@@ -42,6 +42,7 @@ _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_RESULT_LIMIT_CAP = 100
 _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
+_DETAIL_VIEW_MAX_CREATORS = 15
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
     0: "imported_file",
@@ -383,6 +384,7 @@ def _item_to_dict(
     item: dict,
     truncate_abstract: int = 0,
     *,
+    include_attachment_count: bool = False,
     include_attachments: bool = False,
     max_creators: int = -1,
 ) -> dict:
@@ -411,8 +413,13 @@ def _item_to_dict(
         "abstract": abstract,
     }
 
+    if include_attachment_count:
+        result["attachment_count"] = _get_item_attachment_count(data.get("key", ""))
+
     if include_attachments:
-        result["attachments"] = _get_item_attachments(data.get("key", ""))
+        attachments = _get_item_attachments(data.get("key", ""))
+        result["attachment_count"] = len(attachments)
+        result["attachments"] = attachments
 
     return result
 
@@ -430,7 +437,15 @@ def _empty_item_payload(item_key: str = "") -> dict[str, Any]:
         "tags": [],
         "collections": [],
         "abstract": "",
+        "attachment_count": 0,
         "attachments": [],
+    }
+
+
+def _empty_item_summary(item_key: str = "") -> dict[str, str]:
+    return {
+        "key": item_key,
+        "title": "",
     }
 
 
@@ -1658,7 +1673,8 @@ def _result_from_parent(
     score: float,
     best_doc: dict[str, Any],
     query_terms: list[str],
-    attachments: list[dict[str, Any]],
+    attachment_count: int,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     result = {
         "key": parent["key"],
@@ -1671,10 +1687,11 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachment_count": len(attachments),
-        "attachments": list(attachments),
+        "attachment_count": attachment_count,
         "score": round(score, 4),
     }
+    if attachments is not None:
+        result["attachments"] = list(attachments)
 
     if best_doc["doc_kind"] == "attachment_chunk":
         snippet = _snippet_from_text(best_doc["text"], query_terms)
@@ -1692,7 +1709,7 @@ def _result_from_parent(
 
 def _search_response(
     query: str,
-    results: list[dict[str, Any]],
+    items: list[dict[str, Any]],
     *,
     requested_limit: int,
     applied_limit: int,
@@ -1700,9 +1717,9 @@ def _search_response(
     warning: str | None = None,
 ) -> str:
     response: dict[str, Any] = {
-        "results": results,
+        "items": items,
         "query": query,
-        "total": len(results),
+        "total": len(items),
         "requested_limit": requested_limit,
         "applied_limit": applied_limit,
         "limit_cap": _SEARCH_RESULT_LIMIT_CAP,
@@ -1746,7 +1763,7 @@ def _result_from_doc(
 ) -> dict[str, Any]:
     snippet_source = doc["text"] if doc["doc_kind"] == "attachment_chunk" else (parent["abstract"] or doc["text"])
     result = {
-        "item_key": parent["key"],
+        "key": parent["key"],
         "title": parent["title"],
         "itemType": parent["itemType"],
         "score": round(score, 4),
@@ -1766,11 +1783,45 @@ def _result_from_doc(
     return result
 
 
+def _search_within_item_response(
+    *,
+    query: str,
+    matches: list[dict[str, Any]],
+    key: str | None = None,
+    item: dict[str, Any] | None = None,
+    item_keys: list[str] | None = None,
+    items: list[dict[str, Any]] | None = None,
+    missing_item_keys: list[str] | None = None,
+    error: str | None = None,
+    warning: str | None = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "matches": matches,
+        "query": query,
+        "total": len(matches),
+    }
+    if item_keys is not None:
+        payload["item_keys"] = list(item_keys)
+        payload["items"] = items or []
+        if missing_item_keys:
+            payload["missing_item_keys"] = list(missing_item_keys)
+    else:
+        normalized_key = key or ""
+        payload["key"] = normalized_key
+        payload["item"] = item or _empty_item_summary(normalized_key)
+    if error is not None:
+        payload["error"] = error
+    if warning is not None:
+        payload["warning"] = warning
+    return json.dumps(payload)
+
+
 def search(
     query: str,
     collection_key: str = "",
     item_type: str = "",
     limit: int = 10,
+    include_attachments: bool = False,
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
     requested_limit = max(1, limit)
@@ -1886,14 +1937,23 @@ def search(
 
         batch_size = min(max_docs, batch_size * 2)
 
-    attachments_by_parent = _get_item_attachments_by_parent(list(best_by_parent))
+    if include_attachments:
+        attachments_by_parent = _get_item_attachments_by_parent(list(best_by_parent))
+        attachment_counts = {
+            parent_key: len(attachments_by_parent.get(parent_key, []))
+            for parent_key in best_by_parent
+        }
+    else:
+        attachment_counts = _get_item_attachment_counts(list(best_by_parent))
+        attachments_by_parent = {}
     results_payload = [
         _result_from_parent(
             state.parents[parent_key],
             score=score,
             best_doc=doc,
             query_terms=query_terms,
-            attachments=attachments_by_parent.get(parent_key, []),
+            attachment_count=attachment_counts.get(parent_key, 0),
+            attachments=attachments_by_parent.get(parent_key) if include_attachments else None,
         )
         for parent_key, (score, doc) in best_by_parent.items()
     ]
@@ -1928,13 +1988,12 @@ def search_within_item(
             unique_requested_keys.append(key)
 
     if not unique_requested_keys:
-        return json.dumps({
-            "error": "Provide item_key or item_keys",
-            "results": [],
-            "query": query,
-            "item_key": "",
-            "total": 0,
-        })
+        return _search_within_item_response(
+            key="",
+            query=query,
+            matches=[],
+            error="Provide item_key or item_keys",
+        )
 
     multi_item = len(unique_requested_keys) > 1
     normalized_item_key = unique_requested_keys[0]
@@ -1944,43 +2003,39 @@ def search_within_item(
 
     if state is None:
         if multi_item:
-            return json.dumps({
-                "error": "Index is still building, please retry in a moment",
-                "items": [],
-                "results": [],
-                "query": query,
-                "item_keys": unique_requested_keys,
-                "total": 0,
-            })
-        return json.dumps({
-            "error": "Index is still building, please retry in a moment",
-            "results": [],
-            "query": query,
-            "item_key": normalized_item_key,
-            "total": 0,
-        })
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=unique_requested_keys,
+                items=[],
+                error="Index is still building, please retry in a moment",
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            error="Index is still building, please retry in a moment",
+        )
 
     found_item_keys = [key for key in unique_requested_keys if key in state.parents]
     missing_item_keys = [key for key in unique_requested_keys if key not in state.parents]
 
     if not found_item_keys:
         if multi_item:
-            return json.dumps({
-                "error": "None of the requested item keys were found in the search index",
-                "items": [],
-                "results": [],
-                "query": query,
-                "item_keys": unique_requested_keys,
-                "missing_item_keys": missing_item_keys,
-                "total": 0,
-            })
-        return json.dumps({
-            "error": f"Item {normalized_item_key} was not found in the search index",
-            "results": [],
-            "query": query,
-            "item_key": normalized_item_key,
-            "total": 0,
-        })
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=unique_requested_keys,
+                items=[],
+                missing_item_keys=missing_item_keys,
+                error="None of the requested item keys were found in the search index",
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            error=f"Item {normalized_item_key} was not found in the search index",
+        )
 
     if multi_item:
         items_summary = [_item_summary_from_parent(state.parents[key]) for key in found_item_keys]
@@ -1988,24 +2043,27 @@ def search_within_item(
         item_summary = _item_summary_from_parent(state.parents[normalized_item_key])
 
     if state.retriever is None or not state.corpus_docs:
-        payload: dict[str, Any] = {
-            "results": [],
-            "query": query,
-            "total": 0,
-        }
         if multi_item:
-            payload["items"] = items_summary
-            payload["item_keys"] = found_item_keys
+            warning = None
             if missing_item_keys:
-                payload["warning"] = (
+                warning = (
                     "Some requested item keys were not found in the search index: "
                     + ", ".join(missing_item_keys)
                 )
-                payload["missing_item_keys"] = missing_item_keys
-        else:
-            payload["item"] = item_summary
-            payload["item_key"] = normalized_item_key
-        return json.dumps(payload)
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=found_item_keys,
+                items=items_summary,
+                missing_item_keys=missing_item_keys,
+                warning=warning,
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            item=item_summary,
+        )
 
     query_tokens = bm25s.tokenize(
         [query],
@@ -2021,22 +2079,22 @@ def search_within_item(
                 "Some requested item keys were not found in the search index: "
                 + ", ".join(missing_item_keys),
             )
-
-        payload = {
-            "results": [],
-            "query": query,
-            "total": 0,
-            "warning": " ".join(warnings),
-        }
         if multi_item:
-            payload["items"] = items_summary
-            payload["item_keys"] = found_item_keys
-            if missing_item_keys:
-                payload["missing_item_keys"] = missing_item_keys
-        else:
-            payload["item"] = item_summary
-            payload["item_key"] = normalized_item_key
-        return json.dumps(payload)
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=found_item_keys,
+                items=items_summary,
+                missing_item_keys=missing_item_keys,
+                warning=" ".join(warnings),
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            item=item_summary,
+            warning=_EMPTY_QUERY_WARNING,
+        )
 
     attachments_by_parent = _get_item_attachments_by_parent(found_item_keys)
     attachments_lookup_by_parent = {
@@ -2088,25 +2146,28 @@ def search_within_item(
 
         batch_size = min(max_docs, batch_size * 2)
 
-    payload = {
-        "results": matches[:limit],
-        "query": query,
-        "total": len(matches[:limit]),
-    }
     if multi_item:
-        payload["items"] = items_summary
-        payload["item_keys"] = found_item_keys
+        warning = None
         if missing_item_keys:
-            payload["warning"] = (
+            warning = (
                 "Some requested item keys were not found in the search index: "
                 + ", ".join(missing_item_keys)
             )
-            payload["missing_item_keys"] = missing_item_keys
-    else:
-        payload["item"] = item_summary
-        payload["item_key"] = normalized_item_key
+        return _search_within_item_response(
+            query=query,
+            matches=matches[:limit],
+            item_keys=found_item_keys,
+            items=items_summary,
+            missing_item_keys=missing_item_keys,
+            warning=warning,
+        )
 
-    return json.dumps(payload)
+    return _search_within_item_response(
+        key=normalized_item_key,
+        query=query,
+        matches=matches[:limit],
+        item=item_summary,
+    )
 
 
 def list_collections() -> str:
@@ -2188,7 +2249,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
             _item_to_dict(
                 item,
                 truncate_abstract=500,
-                include_attachments=True,
+                include_attachment_count=True,
                 max_creators=_LIST_VIEW_MAX_CREATORS,
             )
         )
@@ -2204,7 +2265,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
 def get_item(item_key: str) -> str:
     """Full metadata for a single item."""
-    normalized_item_key = item_key.strip()
+    normalized_item_key = item_key.strip().upper()
     if not normalized_item_key:
         payload = _empty_item_payload()
         payload["error"] = "Provide item_key"
@@ -2218,7 +2279,14 @@ def get_item(item_key: str) -> str:
         payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
         return json.dumps(payload)
 
-    return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
+    return json.dumps(
+        _item_to_dict(
+            item,
+            truncate_abstract=0,
+            include_attachments=True,
+            max_creators=_DETAIL_VIEW_MAX_CREATORS,
+        )
+    )
 
 
 def get_bibtex_and_citation_for_items(
@@ -2312,7 +2380,7 @@ def get_recent_items(limit: int = 10) -> str:
         _item_to_dict(
             item,
             truncate_abstract=500,
-            include_attachments=True,
+            include_attachment_count=True,
             max_creators=_LIST_VIEW_MAX_CREATORS,
         )
         for item in items

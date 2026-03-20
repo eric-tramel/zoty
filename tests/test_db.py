@@ -206,21 +206,31 @@ class AttachmentPathsTests(DbTestCase):
             result = json.loads(db.get_item("PARENT1"))
 
         self.assertEqual(result["key"], "PARENT1")
+        self.assertEqual(result["attachment_count"], 1)
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
 
-    def test_get_item_preserves_full_creator_list(self):
+    def test_get_item_normalizes_item_key_to_uppercase(self):
+        zot = Mock()
+        zot.item.return_value = self._paper_item()
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            json.loads(db.get_item(" parent1 "))
+
+        zot.item.assert_called_once_with("PARENT1")
+
+    def test_get_item_truncates_very_long_creator_lists(self):
         zot = Mock()
         item = self._paper_item()
-        item["data"]["creators"] = self._creator_dicts(7)
+        item["data"]["creators"] = self._creator_dicts(18)
         zot.item.return_value = item
 
         with patch("zoty.db._get_zot", return_value=zot):
             result = json.loads(db.get_item("PARENT1"))
 
-        self.assertEqual(len(result["creators"]), 7)
+        self.assertEqual(len(result["creators"]), db._DETAIL_VIEW_MAX_CREATORS + 1)
         self.assertEqual(result["creators"][0], "Author1 Example")
-        self.assertEqual(result["creators"][-1], "Author7 Example")
+        self.assertEqual(result["creators"][-1], "... and 3 more")
 
     def test_get_item_rejects_empty_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
@@ -232,6 +242,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["creators"], [])
         self.assertEqual(result["tags"], [])
         self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachment_count"], 0)
         self.assertEqual(result["attachments"], [])
         get_zot_mock.assert_not_called()
 
@@ -245,6 +256,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["creators"], [])
         self.assertEqual(result["tags"], [])
         self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachment_count"], 0)
         self.assertEqual(result["attachments"], [])
         get_zot_mock.assert_not_called()
 
@@ -260,6 +272,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["creators"], [])
         self.assertEqual(result["tags"], [])
         self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachment_count"], 0)
         self.assertEqual(result["attachments"], [])
         self.assertIn("Failed to fetch item PARENT1: boom", result["error"])
 
@@ -289,21 +302,10 @@ class AttachmentPathsTests(DbTestCase):
         result = json.loads(db.search("example"))
 
         self.assertEqual(result["total"], 1)
-        self.assertEqual(result["results"][0]["key"], "PARENT1")
-        self.assertEqual(result["results"][0]["attachment_count"], 1)
-        self.assertEqual(
-            result["results"][0]["attachments"],
-            [
-                {
-                    "key": "ATTACH1",
-                    "title": "Attached PDF",
-                    "contentType": "application/pdf",
-                    "linkMode": "imported_file",
-                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
-                }
-            ],
-        )
-        self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+        self.assertEqual(result["items"][0]["key"], "PARENT1")
+        self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertNotIn("attachments", result["items"][0])
+        self.assertEqual(result["items"][0]["snippet_attachment_key"], "ATTACH1")
 
     def test_search_batches_attachment_detail_lookups_for_multiple_results(self):
         with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
@@ -387,17 +389,17 @@ class AttachmentPathsTests(DbTestCase):
         self._install_search_state(docs, parents=parents)
 
         with patch("zoty.db._open_zotero_db", wraps=db._open_zotero_db) as open_db_mock:
-            result = json.loads(db.search("example", limit=2))
+            result = json.loads(db.search("example", limit=2, include_attachments=True))
 
         self.assertEqual(result["total"], 2)
-        self.assertEqual([row["key"] for row in result["results"]], ["PARENT1", "PARENT2"])
-        self.assertEqual([row["attachment_count"] for row in result["results"]], [1, 1])
+        self.assertEqual([row["key"] for row in result["items"]], ["PARENT1", "PARENT2"])
+        self.assertEqual([row["attachment_count"] for row in result["items"]], [1, 1])
         self.assertEqual(
-            result["results"][0]["attachments"][0]["filepath"],
+            result["items"][0]["attachments"][0]["filepath"],
             str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
         )
         self.assertEqual(
-            result["results"][1]["attachments"][0]["filepath"],
+            result["items"][1]["attachments"][0]["filepath"],
             str(db._ZOTERO_STORAGE / "ATTACH2" / "book.epub"),
         )
         self.assertEqual(open_db_mock.call_count, 1)
@@ -549,18 +551,8 @@ class CollectionItemTests(DbTestCase):
         self.assertFalse(result["limit_capped"])
         self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
         self.assertEqual(result["items"][0]["title"], "First Paper")
-        self.assertEqual(
-            result["items"][0]["attachments"],
-            [
-                {
-                    "key": "ATTACH1",
-                    "title": "Collection PDF",
-                    "contentType": "application/pdf",
-                    "linkMode": "imported_file",
-                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "collection.pdf"),
-                }
-            ],
-        )
+        self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertNotIn("attachments", result["items"][0])
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
 
     def test_list_collection_items_caps_requested_limit_and_reports_metadata(self):
@@ -849,7 +841,7 @@ class RecentItemsTests(DbTestCase):
             )
             conn.commit()
 
-    def test_get_recent_items_includes_attachments(self):
+    def test_get_recent_items_includes_attachment_count(self):
         zot = Mock()
         zot.items.return_value = [
             {
@@ -891,18 +883,8 @@ class RecentItemsTests(DbTestCase):
         self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
         self.assertEqual(result["items"][0]["key"], "ITEM1")
-        self.assertEqual(
-            result["items"][0]["attachments"],
-            [
-                {
-                    "key": "ATTACH1",
-                    "title": "Recent PDF",
-                    "contentType": "application/pdf",
-                    "linkMode": "imported_file",
-                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "recent.pdf"),
-                }
-            ],
-        )
+        self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertNotIn("attachments", result["items"][0])
         zot.items.assert_called_once_with(limit=3, sort="dateAdded", direction="desc")
 
 
@@ -978,7 +960,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("body only"))
 
         self.assertEqual(result["error"], "Index is still building, please retry in a moment")
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["items"], [])
 
     def test_body_only_query_returns_parent_with_attachment_snippet(self):
         attachment_doc = {
@@ -998,9 +980,9 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("meatpotatoes"))
 
         self.assertEqual(result["total"], 1)
-        self.assertEqual(result["results"][0]["key"], "PARENT1")
-        self.assertIn("meatpotatoes", result["results"][0]["snippet"].lower())
-        self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+        self.assertEqual(result["items"][0]["key"], "PARENT1")
+        self.assertIn("meatpotatoes", result["items"][0]["snippet"].lower())
+        self.assertEqual(result["items"][0]["snippet_attachment_key"], "ATTACH1")
 
     def test_search_truncates_long_creator_lists(self):
         attachment_doc = {
@@ -1035,7 +1017,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("meatpotatoes"))
 
         self.assertEqual(
-            result["results"][0]["creators"],
+            result["items"][0]["creators"],
             [
                 "Author 1",
                 "Author 2",
@@ -1064,9 +1046,9 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("novelty"))
 
         self.assertEqual(result["total"], 1)
-        self.assertEqual(result["results"][0]["key"], "PARENT1")
-        self.assertIn("example abstract", result["results"][0]["snippet"].lower())
-        self.assertNotIn("snippet_attachment_key", result["results"][0])
+        self.assertEqual(result["items"][0]["key"], "PARENT1")
+        self.assertIn("example abstract", result["items"][0]["snippet"].lower())
+        self.assertNotIn("snippet_attachment_key", result["items"][0])
 
     def test_multiple_matching_chunks_collapse_to_one_parent(self):
         parents = {
@@ -1140,8 +1122,8 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("shared"))
 
         self.assertEqual(result["total"], 2)
-        self.assertEqual([row["key"] for row in result["results"]], ["PARENT1", "PARENT2"])
-        self.assertEqual(result["results"][0]["score"], 9.0)
+        self.assertEqual([row["key"] for row in result["items"]], ["PARENT1", "PARENT2"])
+        self.assertEqual(result["items"][0]["score"], 9.0)
 
     def test_collection_and_item_type_filters_apply_at_parent_level(self):
         parents = {
@@ -1203,7 +1185,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("query", collection_key="KEEP", item_type="preprint"))
 
         self.assertEqual(result["total"], 1)
-        self.assertEqual(result["results"][0]["key"], "PARENT1")
+        self.assertEqual(result["items"][0]["key"], "PARENT1")
 
     def test_search_warns_for_unknown_collection_key_filter(self):
         self._install_search_state([
@@ -1223,7 +1205,7 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search("query", collection_key="missing"))
 
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(
             result["warning"],
@@ -1248,7 +1230,7 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search("query", item_type="invalidType"))
 
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(
             result["warning"],
@@ -1299,9 +1281,9 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
         self.assertTrue(result["limit_capped"])
         self.assertEqual(result["total"], db._SEARCH_RESULT_LIMIT_CAP)
-        self.assertEqual(len(result["results"]), db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(len(result["items"]), db._SEARCH_RESULT_LIMIT_CAP)
         self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
-        self.assertEqual(result["results"][0]["key"], "PARENT1")
+        self.assertEqual(result["items"][0]["key"], "PARENT1")
 
     def test_search_returns_warning_when_query_has_no_searchable_terms(self):
         self._install_search_state([
@@ -1321,7 +1303,7 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search("the and or", limit=3))
 
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
         self.assertEqual(db._search_state.retriever.calls, [])
@@ -1344,7 +1326,7 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search("quantum topology", limit=3))
 
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
         self.assertNotIn("warning", result)
 
@@ -1431,18 +1413,18 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("parent1", "query", limit=3))
 
-        self.assertEqual(result["item_key"], "PARENT1")
+        self.assertEqual(result["key"], "PARENT1")
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "First Paper"})
         self.assertNotIn("abstract", result["item"])
         self.assertNotIn("attachments", result["item"])
         self.assertEqual(result["total"], 3)
         self.assertEqual(
-            [row["match_type"] for row in result["results"]],
+            [row["match_type"] for row in result["matches"]],
             ["attachment_chunk", "attachment_chunk", "metadata"],
         )
-        self.assertEqual(result["results"][0]["attachment_key"], "ATTACH1")
-        self.assertEqual(result["results"][1]["attachment_key"], "ATTACH2")
-        self.assertNotIn("attachment_key", result["results"][2])
+        self.assertEqual(result["matches"][0]["attachment_key"], "ATTACH1")
+        self.assertEqual(result["matches"][1]["attachment_key"], "ATTACH2")
+        self.assertNotIn("attachment_key", result["matches"][2])
 
     def test_search_within_item_returns_lean_item_summary_when_query_has_no_terms(self):
         self._install_search_state([
@@ -1463,7 +1445,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("parent1", "the and", limit=3))
 
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
         self.assertEqual(db._search_state.retriever.calls, [])
@@ -1487,7 +1469,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("parent1", "quantum topology", limit=3))
 
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertNotIn("warning", result)
 
@@ -1509,8 +1491,9 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("missing", "query"))
 
-        self.assertEqual(result["item_key"], "MISSING")
-        self.assertEqual(result["results"], [])
+        self.assertEqual(result["key"], "MISSING")
+        self.assertEqual(result["item"], {"key": "MISSING", "title": ""})
+        self.assertEqual(result["matches"], [])
         self.assertIn("was not found", result["error"])
 
     def test_search_within_item_supports_multi_item_queries(self):
@@ -1588,7 +1571,7 @@ class SearchBehaviorTests(DbTestCase):
             ],
         )
         self.assertEqual(result["total"], 2)
-        self.assertEqual([row["item_key"] for row in result["results"]], ["PARENT2", "PARENT1"])
+        self.assertEqual([row["key"] for row in result["matches"]], ["PARENT2", "PARENT1"])
 
 
 class SnapshotLifecycleTests(DbTestCase):

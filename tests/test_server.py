@@ -88,31 +88,33 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
 
     def test_search_library_delegates_to_db(self):
-        with patch.object(server.db, "search", return_value='{"results": []}') as db_mock:
+        with patch.object(server.db, "search", return_value='{"items": []}') as db_mock:
             result = server.search_library(
                 query="transformer attention",
                 collection_key="COLL123",
                 item_type="preprint",
                 limit=5,
+                include_attachments=True,
             )
 
-        self.assertEqual(result, '{"results": []}')
+        self.assertEqual(result, '{"items": []}')
         db_mock.assert_called_once_with(
             "transformer attention",
             collection_key="COLL123",
             item_type="preprint",
             limit=5,
+            include_attachments=True,
         )
 
     def test_search_library_docstring_mentions_snippet_and_abstract_behavior(self):
         doc = server.search_library.__doc__ or ""
 
         self.assertIn("abstract text truncated to 500 characters", doc)
-        self.assertIn("snippet_attachment_key", doc)
-        self.assertIn("Invalid collection_key", doc)
+        self.assertIn("include_attachments", doc)
+        self.assertIn("invalid `collection_key` / `item_type` filters", doc)
 
     def test_search_within_item_delegates_to_db(self):
-        with patch.object(server.db, "search_within_item", return_value='{"results": []}') as db_mock:
+        with patch.object(server.db, "search_within_item", return_value='{"matches": []}') as db_mock:
             result = server.search_within_item(
                 item_key="ITEM123",
                 item_keys=["ITEM456"],
@@ -120,13 +122,19 @@ class ServerToolTests(unittest.TestCase):
                 limit=5,
             )
 
-        self.assertEqual(result, '{"results": []}')
+        self.assertEqual(result, '{"matches": []}')
         db_mock.assert_called_once_with(
             item_key="ITEM123",
             item_keys=["ITEM456"],
             query="transformer attention",
             limit=5,
         )
+
+    def test_response_shape_docstrings_reflect_canonical_keys(self):
+        self.assertIn("under `items`", server.search_library.__doc__)
+        self.assertIn("`matches`", server.search_within_item.__doc__)
+        self.assertIn("attachment_count", server.list_collection_items.__doc__)
+        self.assertIn("attachment_count", server.get_recent_items.__doc__)
 
     def test_get_bibtex_and_citation_for_items_delegates_to_db(self):
         with patch.object(server.db, "get_bibtex_and_citation_for_items", return_value='{"items": []}') as db_mock:
