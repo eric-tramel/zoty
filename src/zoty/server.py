@@ -19,6 +19,7 @@ def search_library(
     collection_key: str = "",
     item_type: str = "",
     limit: int = 10,
+    include_attachments: bool = False,
 ) -> str:
     """Find which items in your Zotero library match a keyword query.
 
@@ -31,21 +32,23 @@ def search_library(
             (e.g. "journalArticle", "preprint", "conferencePaper", "book",
             "bookSection", "thesis", "report", "webpage")
         limit: Maximum results to return (default: 10)
+        include_attachments: Include resolved attachment metadata in each
+            returned item. Defaults to `False`; otherwise `attachment_count`
+            is still present without the heavier attachment array.
 
     Returns:
-        JSON with ranked search results including title, creators, date, score,
-        abstract text truncated to 500 characters, attachment_count, and
-        lightweight attachment details. Snippets are included when query terms
-        match either the best-ranked attachment chunk (with
-        snippet_attachment_key) or the abstract metadata. Invalid collection_key
-        and item_type filters return a warning instead of silently failing.
-        Response metadata includes requested/applied limits and cap details.
+        JSON with ranked Zotero items under `items`, including key, title,
+        creators, date, score, abstract text truncated to 500 characters,
+        `attachment_count`, optional `attachments` when
+        `include_attachments=True`, optional plain-text snippets, warnings for
+        invalid `collection_key` / `item_type` filters, and limit metadata.
     """
     return db.search(
         query,
         collection_key=collection_key,
         item_type=item_type,
         limit=limit,
+        include_attachments=include_attachments,
     )
 
 
@@ -71,9 +74,10 @@ def search_within_item(
         limit: Maximum number of passage matches to return (default: 5)
 
     Returns:
-        JSON with ranked passage matches, including snippets and attachment
-        context for chunk hits. Single-item calls return `item`; multi-item
-        calls return `items` and `item_keys`.
+        JSON with ranked passage `matches`, including snippets and attachment
+        context for chunk hits. Single-item calls return `key` and `item`;
+        multi-item calls return `item_keys` and `items`. Each match uses
+        `key` for the parent item.
     """
     return db.search_within_item(
         item_key=item_key,
@@ -104,7 +108,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
     Returns:
         JSON with `collection_key`, `collection_found`, `items`, and limit
         metadata. Each item includes `key`, `title`, `creators`, `date`,
-        truncated `abstract` (500 chars), `attachments`, and other summary
+        truncated `abstract` (500 chars), `attachment_count`, and other summary
         fields.
     """
     return db.list_collection_items(collection_key, limit=limit)
@@ -120,10 +124,12 @@ def get_item(item_key: str) -> str:
             results (for example, `X9KJ2M4P`).
 
     Returns:
-        JSON with complete item metadata including the full untruncated abstract,
-        title, creators, date, DOI, URL, tags, collections, and attachment
-        filepaths. Search results already include most fields, so use this only
-        when the full abstract is needed.
+        JSON with complete item metadata including the full untruncated
+        abstract, title, creators, date, DOI, URL, tags, collections,
+        attachment counts, and attachment filepaths. Very large creator lists
+        are summarized to keep the payload bounded. Search results already
+        include most fields, so use this only when the full abstract or full
+        attachment records are needed.
     """
     return db.get_item(item_key)
 
@@ -172,7 +178,7 @@ def get_recent_items(limit: int = 10) -> str:
     Returns:
         JSON with `items`, `total`, and limit metadata. Each item includes
         `key`, `title`, `creators`, `date`, truncated `abstract` (500 chars),
-        `attachments`, and other summary fields.
+        `attachment_count`, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 
