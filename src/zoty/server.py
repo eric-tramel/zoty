@@ -9,6 +9,53 @@ from mcp.server.fastmcp import FastMCP
 from zoty import db, connector
 
 MCP_SERVER_NAME = "zoty"
+_SEARCH_RESULT_LIMIT_CAP = db._SEARCH_RESULT_LIMIT_CAP
+_LIST_RESULT_LIMIT_CAP = db._LIST_RESULT_LIMIT_CAP
+_SEARCH_LIBRARY_ITEM_TYPES = (
+    "artwork",
+    "audioRecording",
+    "bill",
+    "blogPost",
+    "book",
+    "bookSection",
+    "case",
+    "computerProgram",
+    "conferencePaper",
+    "dataset",
+    "dictionaryEntry",
+    "document",
+    "email",
+    "encyclopediaArticle",
+    "film",
+    "forumPost",
+    "hearing",
+    "instantMessage",
+    "interview",
+    "journalArticle",
+    "letter",
+    "magazineArticle",
+    "manuscript",
+    "map",
+    "newspaperArticle",
+    "patent",
+    "podcast",
+    "preprint",
+    "presentation",
+    "radioBroadcast",
+    "report",
+    "standard",
+    "statute",
+    "thesis",
+    "tvBroadcast",
+    "videoRecording",
+    "webpage",
+)
+_SEARCH_LIBRARY_ITEM_TYPE_DESCRIPTION = (
+    "Optional case-insensitive Zotero parent itemType filter. Canonical values are "
+    + ", ".join(f"`{item_type}`" for item_type in _SEARCH_LIBRARY_ITEM_TYPES)
+    + ". If the requested value is not present in the current search index, the response "
+    + "returns no items and a warning."
+)
 
 mcp_server = FastMCP(MCP_SERVER_NAME)
 
@@ -28,10 +75,15 @@ def search_library(
     Args:
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
         collection_key: Optional Zotero collection key to filter results
-        item_type: Optional Zotero item type filter, case-insensitive
-            (e.g. "journalArticle", "preprint", "conferencePaper", "book",
-            "bookSection", "thesis", "report", "webpage")
-        limit: Maximum results to return (default: 10)
+        item_type: Optional case-insensitive Zotero parent itemType filter.
+            Canonical values are surfaced in the tool schema and description,
+            and values not present in the current search index return no
+            items plus a warning instead of silently filtering everything
+            out.
+        limit: Requested results to return (default: 10, capped at 25).
+            `limit=0` returns no items without retrieval, and the response
+            includes `requested_limit`, `applied_limit`, `limit_cap`, and
+            `limit_capped` so callers can detect clamping.
         include_attachments: Include resolved attachment metadata in each
             returned item. Defaults to `False`; otherwise `attachment_count`
             is still present without the heavier attachment array.
@@ -41,7 +93,8 @@ def search_library(
         creators, date, score, abstract text truncated to 500 characters,
         `attachment_count`, optional `attachments` when
         `include_attachments=True`, optional plain-text snippets, warnings for
-        invalid `collection_key` / `item_type` filters, and limit metadata.
+        invalid `collection_key` / `item_type` filters or empty queries, and
+        limit metadata.
     """
     return db.search(
         query,
@@ -112,13 +165,17 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
     Args:
         collection_key: The Zotero collection key (from list_collections)
-        limit: Requested items to return before the cap is applied (default: 50)
+        limit: Requested items to return (default: 50, capped at 25).
+            `limit=0` returns an empty result set, and the response includes
+            `requested_limit`, `applied_limit`, `limit_cap`, and
+            `limit_capped` so callers can detect clamping.
 
     Returns:
         JSON with `collection_key`, `collection_found`, `items`, and limit
-        metadata. Each item includes `key`, `title`, `creators`, `date`,
-        truncated `abstract` (500 chars), `attachment_count`, and other summary
-        fields.
+        metadata (`requested_limit`, `applied_limit`, `limit_cap`,
+        `limit_capped`). Each item includes `key`, `title`, `creators`,
+        `date`, truncated `abstract` (500 chars), `attachment_count`, and
+        other summary fields.
     """
     return db.list_collection_items(collection_key, limit=limit)
 
@@ -151,7 +208,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
 
 @mcp_server.tool()
 def get_bibtex_and_citation_for_items(
-    item_key: str = "",
+    item_key: str | None = None,
     item_keys: list[str] | None = None,
     style: str = "chicago-note-bibliography",
     locale: str = "en-US",
@@ -176,7 +233,7 @@ def get_bibtex_and_citation_for_items(
         plain-text bibliography, and a BibTeX export block.
     """
     return db.get_bibtex_and_citation_for_items(
-        item_key=item_key,
+        item_key=item_key or "",
         item_keys=item_keys,
         style=style,
         locale=locale,
@@ -188,12 +245,17 @@ def get_recent_items(limit: int = 10) -> str:
     """Get recently added items from the Zotero library, sorted by date added.
 
     Args:
-        limit: Requested items to return before the cap is applied (default: 10)
+        limit: Requested items to return (default: 10, capped at 25).
+            `limit=0` returns an empty result set, and the response includes
+            `requested_limit`, `applied_limit`, `limit_cap`, and
+            `limit_capped` so callers can detect clamping.
 
     Returns:
-        JSON with `items`, `total`, and limit metadata. Each item includes
+        JSON with `items`, `total`, and limit metadata (`requested_limit`,
+        `applied_limit`, `limit_cap`, `limit_capped`). Each item includes
         `key`, `title`, `creators`, `date`, `date_added`, truncated
-        `abstract` (500 chars), `attachment_count`, and other summary fields.
+        `abstract` (500 chars), `attachment_count`, and other summary
+        fields.
     """
     return db.get_recent_items(limit=limit)
 
@@ -224,6 +286,73 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
         or an error message.
     """
     return connector.add_paper(arxiv_id=arxiv_id, doi=doi, collection_key=collection_key)
+
+
+def _augment_tool_schemas() -> None:
+    search_tool = mcp_server._tool_manager.get_tool("search_library")
+    if search_tool is not None:
+        search_tool.description = (
+            f"{search_tool.description}\n\n"
+            f"Canonical `item_type` values: {', '.join(f'`{item_type}`' for item_type in _SEARCH_LIBRARY_ITEM_TYPES)}. "
+            "If the requested value is not present in the current search index, the response returns no items and a warning."
+        )
+
+        search_properties = search_tool.parameters.setdefault("properties", {})
+        search_properties.setdefault("item_type", {})["description"] = _SEARCH_LIBRARY_ITEM_TYPE_DESCRIPTION
+        search_properties.setdefault("limit", {})["description"] = (
+            "Requested results to return. Values below 0 are treated as 0, values above "
+            f"{_SEARCH_RESULT_LIMIT_CAP} are clamped to {_SEARCH_RESULT_LIMIT_CAP}, and the response "
+            "reports `requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`."
+        )
+
+    for tool_name in ("list_collection_items", "get_recent_items"):
+        tool = mcp_server._tool_manager.get_tool(tool_name)
+        if tool is None:
+            continue
+        properties = tool.parameters.setdefault("properties", {})
+        properties.setdefault("limit", {})["description"] = (
+            "Requested items to return. Values below 0 are treated as 0, values above "
+            f"{_LIST_RESULT_LIMIT_CAP} are clamped to {_LIST_RESULT_LIMIT_CAP}, and the response "
+            "reports `requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`."
+        )
+
+    tool = mcp_server._tool_manager.get_tool("get_bibtex_and_citation_for_items")
+    if tool is None:
+        return
+
+    tool.parameters["anyOf"] = [
+        {
+            "required": ["item_key"],
+            "properties": {
+                "item_key": {
+                    "type": "string",
+                    "minLength": 1,
+                },
+            },
+        },
+        {
+            "required": ["item_keys"],
+            "properties": {
+                "item_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "minItems": 1,
+                },
+            },
+        },
+    ]
+    tool.parameters["properties"]["item_key"]["description"] = (
+        "A single Zotero item key. Provide this, `item_keys`, or both."
+    )
+    tool.parameters["properties"]["item_keys"]["description"] = (
+        "A list of Zotero item keys for batch export. Provide this, `item_key`, or both."
+    )
+
+
+_augment_tool_schemas()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
