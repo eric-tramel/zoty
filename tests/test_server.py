@@ -244,6 +244,7 @@ class ServerToolTests(unittest.TestCase):
             schema["properties"]["item_key"]["description"],
             "A single Zotero item key. Provide this, `item_keys`, or both.",
         )
+        self.assertIsNone(schema["properties"]["item_key"]["default"])
         self.assertEqual(
             schema["properties"]["item_keys"]["description"],
             "A list of Zotero item keys for batch export. Provide this, `item_key`, or both.",

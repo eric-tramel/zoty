@@ -208,7 +208,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
 
 @mcp_server.tool()
 def get_bibtex_and_citation_for_items(
-    item_key: str = "",
+    item_key: str | None = None,
     item_keys: list[str] | None = None,
     style: str = "chicago-note-bibliography",
     locale: str = "en-US",
@@ -233,7 +233,7 @@ def get_bibtex_and_citation_for_items(
         plain-text bibliography, and a BibTeX export block.
     """
     return db.get_bibtex_and_citation_for_items(
-        item_key=item_key,
+        item_key=item_key or "",
         item_keys=item_keys,
         style=style,
         locale=locale,
