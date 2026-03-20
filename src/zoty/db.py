@@ -339,28 +339,40 @@ def _xhtml_to_text(fragment: str) -> str:
     return " ".join(html.unescape(text).split())
 
 
-def _fetch_item_export(
+def _fetch_item_exports(
     item_key: str,
     *,
-    content: str,
     style: str,
     locale: str,
-) -> str:
-    """Fetch one formatted export block for a Zotero item."""
+) -> dict[str, str]:
+    """Fetch formatted citation, bibliography, and BibTeX blocks for one item."""
     zot = _get_zot()
     exported = zot.item(
         item_key,
-        format="atom",
-        content=content,
+        format="json",
+        include="bib,citation,bibtex",
         style=style,
         locale=locale,
     )
 
-    if isinstance(exported, list):
-        return exported[0] if exported else ""
-    if isinstance(exported, str):
-        return exported
-    return ""
+    if not isinstance(exported, dict):
+        raise TypeError(f"Unexpected export payload: {type(exported).__name__}")
+
+    data = exported.get("data", {}) if isinstance(exported.get("data"), dict) else {}
+
+    def _get_export_block(name: str) -> str:
+        value = exported.get(name, data.get(name, ""))
+        if isinstance(value, list):
+            return value[0] if value else ""
+        if isinstance(value, str):
+            return value
+        return ""
+
+    return {
+        "citation": _get_export_block("citation"),
+        "bibliography": _get_export_block("bib"),
+        "bibtex": _get_export_block("bibtex"),
+    }
 
 
 def _ensure_sidecar_layout() -> None:
@@ -1869,30 +1881,13 @@ def get_bibtex_and_citation_for_items(
 
     for key in requested_keys:
         try:
-            citation = _fetch_item_export(
-                key,
-                content="citation",
-                style=style,
-                locale=locale,
-            )
-            bibliography = _fetch_item_export(
-                key,
-                content="bib",
-                style=style,
-                locale=locale,
-            )
-            bibtex = _fetch_item_export(
-                key,
-                content="bibtex",
-                style=style,
-                locale=locale,
-            )
+            exports = _fetch_item_exports(key, style=style, locale=locale)
 
             results.append({
                 "key": key,
-                "citation": _xhtml_to_text(citation),
-                "bibliography": _xhtml_to_text(bibliography),
-                "bibtex": bibtex.strip(),
+                "citation": _xhtml_to_text(exports["citation"]),
+                "bibliography": _xhtml_to_text(exports["bibliography"]),
+                "bibtex": exports["bibtex"].strip(),
             })
         except Exception as exc:
             errors.append({
