@@ -118,23 +118,29 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
 
 @mcp_server.tool()
-def get_item(item_key: str) -> str:
-    """Get full metadata for a single Zotero item.
+def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
+    """Get full metadata for one Zotero item or a batch of items.
 
     Args:
-        item_key: The Zotero item key. Use the `key` field from
+        item_key: A single Zotero item key. Use the `key` field from
             `search_library`, `list_collection_items`, or `get_recent_items`
             results (for example, `X9KJ2M4P`).
+        item_keys: Optional additional Zotero item keys for batch detail
+            retrieval. `item_key` and `item_keys` can be combined, and at
+            least one must be provided for batch mode. Single-key requests
+            keep the legacy single-item response shape.
 
     Returns:
-        JSON with complete item metadata including the full untruncated
-        abstract, title, creators, date, DOI, URL, tags, collections,
-        attachment counts, and attachment filepaths. Very large creator lists
-        are summarized to keep the payload bounded. Search results already
-        include most fields, so use this only when the full abstract or full
+        Single-key requests return JSON with complete item metadata including
+        the full untruncated abstract, title, creators, date, DOI, URL, tags,
+        collections, attachment counts, and attachment filepaths. Multi-key
+        requests return JSON with `item_keys`, `items`, `requested`, `total`,
+        and optional per-item `errors`. Very large creator lists are
+        summarized to keep the payload bounded. Search results already include
+        most fields, so use this only when the full abstract or full
         attachment records are needed.
     """
-    return db.get_item(item_key)
+    return db.get_item(item_key=item_key, item_keys=item_keys)
 
 
 @mcp_server.tool()
