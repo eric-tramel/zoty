@@ -482,7 +482,7 @@ def _connect_manifest(*, writable: bool = False) -> sqlite3.Connection:
     if writable:
         conn = sqlite3.connect(path)
     else:
-        conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

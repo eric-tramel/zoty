@@ -1417,6 +1417,19 @@ class SnapshotLifecycleTests(DbTestCase):
             source_signature=signature,
         )
 
+    def test_connect_manifest_uses_read_only_uri_for_read_connections(self):
+        mock_conn = Mock()
+
+        with patch("zoty.db.sqlite3.connect", return_value=mock_conn) as connect_mock:
+            conn = db._connect_manifest()
+
+        self.assertIs(conn, mock_conn)
+        connect_mock.assert_called_once_with(
+            f"file:{db._manifest_db_path()}?mode=ro",
+            uri=True,
+        )
+        self.assertEqual(mock_conn.row_factory, sqlite3.Row)
+
     def test_prepare_search_index_loads_existing_snapshot_and_skips_refresh(self):
         parent = self._make_parent()
         doc = db._build_metadata_doc(parent)
