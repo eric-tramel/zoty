@@ -106,6 +106,29 @@ class ArxivRateLimiterTests(unittest.TestCase):
         self.assertEqual(result["creators"][0]["lastName"], "Example")
         run_mock.assert_called_once()
 
+    def test_fetch_arxiv_metadata_rejects_error_entries(self):
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/api/errors#id_list=not-a-real-id</id>
+    <title>Error</title>
+    <summary>Invalid id_list parameter.</summary>
+  </entry>
+</feed>"""
+
+        with patch.object(connector._ARXIV_METADATA_LIMITER, "run", return_value=feed):
+            with self.assertRaisesRegex(ValueError, r"Invalid arXiv ID: not-a-real-id\. No paper found\."):
+                connector._fetch_arxiv_metadata("not-a-real-id")
+
+    def test_add_paper_returns_validation_error_for_invalid_arxiv_id(self):
+        with patch(
+            "zoty.connector._fetch_arxiv_metadata",
+            side_effect=ValueError("Invalid arXiv ID: not-a-real-id. No paper found."),
+        ):
+            result = json.loads(connector.add_paper(arxiv_id="not-a-real-id"))
+
+        self.assertEqual(result, {"error": "Invalid arXiv ID: not-a-real-id. No paper found."})
+
     @patch("zoty.connector._retrieve_url", autospec=True)
     def test_download_with_rate_limit_uses_pdf_limiter_for_arxiv_urls(self, retrieve_mock):
         with patch.object(
