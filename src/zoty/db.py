@@ -1926,7 +1926,14 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         }
         if normalized_collection_key not in item_collections:
             continue
-        result.append(_item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS))
+        result.append(
+            _item_to_dict(
+                item,
+                truncate_abstract=500,
+                include_attachments=True,
+                max_creators=_LIST_VIEW_MAX_CREATORS,
+            )
+        )
 
     return json.dumps({
         "collection_key": normalized_collection_key,
@@ -2015,7 +2022,12 @@ def get_recent_items(limit: int = 10) -> str:
         return json.dumps({"error": f"Failed to fetch recent items: {exc}"})
 
     result = [
-        _item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS)
+        _item_to_dict(
+            item,
+            truncate_abstract=500,
+            include_attachments=True,
+            max_creators=_LIST_VIEW_MAX_CREATORS,
+        )
         for item in items
     ]
     return json.dumps({"items": result, "total": len(result)})
