@@ -57,18 +57,31 @@ class _SerializedRateLimiter:
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._in_flight = False
         self._next_allowed_at = 0.0
 
     def run(self, func, *args, **kwargs):
-        with self._lock:
-            wait = self._next_allowed_at - self._clock()
-            if wait > 0:
-                self._sleep(wait)
+        while True:
+            with self._condition:
+                if self._in_flight:
+                    self._condition.wait()
+                    continue
 
-            try:
-                return func(*args, **kwargs)
-            finally:
+                wait = self._next_allowed_at - self._clock()
+                if wait <= 0:
+                    self._in_flight = True
+                    break
+
+            self._sleep(wait)
+
+        try:
+            return func(*args, **kwargs)
+        finally:
+            with self._condition:
                 self._next_allowed_at = self._clock() + self._min_interval
+                self._in_flight = False
+                self._condition.notify_all()
 
 
 class _SlidingWindowRateLimiter:
