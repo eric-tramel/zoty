@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -1405,6 +1406,56 @@ class SnapshotLifecycleTests(DbTestCase):
         self.assertIn("PARENT1", db._search_state.parents)
         refresh_mock.assert_not_called()
 
+    def test_prepare_search_index_holds_lock_during_snapshot_load(self):
+        parent = self._make_parent()
+        doc = db._build_metadata_doc(parent)
+        self.assertIsNotNone(doc)
+
+        with closing(db._connect_manifest(writable=True)) as conn:
+            db._initialize_manifest(conn)
+            db._upsert_parent(conn, parent)
+            db._insert_doc(conn, doc)
+            snapshot_id, _retriever, _corpus_docs = db._build_snapshot(
+                [doc],
+                source_fingerprint="fingerprint-1",
+                parent_count=1,
+                attachment_count=0,
+            )
+            db._set_meta(conn, "active_snapshot_id", snapshot_id)
+            db._set_meta(conn, "last_source_fingerprint", "fingerprint-1")
+            conn.commit()
+
+        db._search_state = None
+
+        load_started = threading.Event()
+        release_load = threading.Event()
+        real_load_snapshot = db._load_snapshot
+
+        def slow_load(snapshot_to_load):
+            load_started.set()
+            release_load.wait(timeout=1)
+            return real_load_snapshot(snapshot_to_load)
+
+        with (
+            patch("zoty.db._compute_source_fingerprint", return_value="fingerprint-1"),
+            patch("zoty.db._start_refresh_thread") as refresh_mock,
+            patch("zoty.db._load_snapshot", side_effect=slow_load),
+        ):
+            thread = threading.Thread(target=db.prepare_search_index)
+            thread.start()
+            self.assertTrue(load_started.wait(timeout=1))
+            acquired = db._index_lock.acquire(blocking=False)
+            if acquired:
+                db._index_lock.release()
+            self.assertFalse(acquired)
+            release_load.set()
+            thread.join(timeout=1)
+
+        self.assertFalse(thread.is_alive())
+        self.assertIsNotNone(db._search_state)
+        self.assertEqual(db._search_state.snapshot_id, snapshot_id)
+        refresh_mock.assert_not_called()
+
     def test_prepare_search_index_requests_refresh_when_fingerprint_changes(self):
         parent = self._make_parent()
         doc = db._build_metadata_doc(parent)
@@ -1482,6 +1533,39 @@ class SnapshotLifecycleTests(DbTestCase):
 
         db._prune_snapshots("snap-3", "snap-2")
 
+        self.assertTrue((snapshots_dir / "snap-3").exists())
+        self.assertTrue((snapshots_dir / "snap-2").exists())
+        self.assertFalse((snapshots_dir / "snap-1").exists())
+
+    def test_prune_snapshots_waits_for_index_lock(self):
+        snapshots_dir = db._snapshots_dir()
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("snap-1", "snap-2", "snap-3"):
+            (snapshots_dir / name).mkdir(parents=True, exist_ok=True)
+
+        delete_started = threading.Event()
+        release_delete = threading.Event()
+        real_rmtree = db.shutil.rmtree
+
+        def blocking_rmtree(path, ignore_errors=False):
+            delete_started.set()
+            release_delete.wait(timeout=1)
+            return real_rmtree(path, ignore_errors=ignore_errors)
+
+        with patch("zoty.db.shutil.rmtree", side_effect=blocking_rmtree):
+            with db._index_lock:
+                thread = threading.Thread(
+                    target=db._prune_snapshots,
+                    args=("snap-3", "snap-2"),
+                )
+                thread.start()
+                self.assertFalse(delete_started.wait(timeout=0.1))
+                self.assertTrue((snapshots_dir / "snap-1").exists())
+                release_delete.set()
+
+            thread.join(timeout=1)
+
+        self.assertFalse(thread.is_alive())
         self.assertTrue((snapshots_dir / "snap-3").exists())
         self.assertTrue((snapshots_dir / "snap-2").exists())
         self.assertFalse((snapshots_dir / "snap-1").exists())
