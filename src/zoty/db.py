@@ -155,6 +155,22 @@ def _normalize_plain_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def _normalize_item_date(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not normalized:
+        return ""
+
+    parts = normalized.split(" ")
+    if (
+        len(parts) == 2
+        and parts[0] == parts[1]
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) is not None
+    ):
+        return parts[0]
+
+    return normalized
+
+
 def _extract_query_terms(query: str) -> list[str]:
     return re.findall(r"(?u)\b\w\w+\b", query.lower())
 
@@ -587,7 +603,7 @@ def _fetch_parent_records() -> dict[str, _ParentRecord]:
             elif field_name == "abstractNote":
                 parent.abstract = value
             elif field_name == "date":
-                parent.date = value
+                parent.date = _normalize_item_date(value)
             elif field_name == "DOI":
                 parent.doi = value
             elif field_name == "url":
