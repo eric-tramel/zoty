@@ -27,7 +27,9 @@ def search_library(
     Args:
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
         collection_key: Optional Zotero collection key to filter results
-        item_type: Optional item type filter (e.g. "journalArticle", "preprint", "conferencePaper")
+        item_type: Optional Zotero item type filter, case-insensitive
+            (e.g. "journalArticle", "preprint", "conferencePaper", "book",
+            "bookSection", "thesis", "report", "webpage")
         limit: Maximum results to return (default: 10)
 
     Returns:
@@ -93,8 +95,10 @@ def get_item(item_key: str) -> str:
         item_key: The Zotero item key
 
     Returns:
-        JSON with complete item metadata including title, creators, abstract,
-        date, DOI, URL, tags, collections, and attachment filepaths.
+        JSON with complete item metadata including the full untruncated abstract,
+        title, creators, date, DOI, URL, tags, collections, and attachment
+        filepaths. Search results already include most fields, so use this only
+        when the full abstract is needed.
     """
     return db.get_item(item_key)
 
@@ -111,7 +115,9 @@ def get_bibtex_and_citation_for_items(
     Args:
         item_key: A single Zotero item key, typically returned by search_library
         item_keys: Optional list of Zotero item keys, typically returned by search_library
-        style: Citation style to use for formatted citation and bibliography text
+        style: CSL style ID to use for formatted citation and bibliography text (for example,
+            'apa', 'ieee', or 'chicago-note-bibliography'); see the Zotero Style Repository
+            for the full list
         locale: Citation locale to use for formatted citation and bibliography text
 
     Returns:

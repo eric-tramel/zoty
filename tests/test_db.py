@@ -183,11 +183,19 @@ class AttachmentPathsTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Attached PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
                 }
             ],
         )
+
+    def test_format_link_mode_maps_known_and_unknown_values(self):
+        self.assertEqual(db._format_link_mode(0), "imported_file")
+        self.assertEqual(db._format_link_mode(1), "imported_url")
+        self.assertEqual(db._format_link_mode(2), "linked_file")
+        self.assertEqual(db._format_link_mode(3), "linked_url")
+        self.assertEqual(db._format_link_mode(99), "unknown(99)")
+        self.assertEqual(db._format_link_mode(None), "unknown")
 
     def test_get_item_includes_attachment_filepaths(self):
         zot = Mock()
@@ -485,7 +493,7 @@ class CollectionItemTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Collection PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "collection.pdf"),
                 }
             ],
@@ -759,7 +767,7 @@ class RecentItemsTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Recent PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "recent.pdf"),
                 }
             ],
@@ -1114,6 +1122,51 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
         self.assertEqual(result["results"][0]["key"], "PARENT1")
 
+    def test_search_returns_warning_when_query_has_no_searchable_terms(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("the and or", limit=3))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
+    def test_search_does_not_return_warning_for_valid_zero_match_query(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 0.0),
+        ])
+
+        result = json.loads(db.search("quantum topology", limit=3))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("warning", result)
+
     def test_search_within_item_returns_multiple_ranked_matches_for_one_parent(self):
         parents = {
             "PARENT1": {
@@ -1231,6 +1284,31 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
         self.assertEqual(result["results"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
+    def test_search_within_item_does_not_return_warning_for_valid_zero_match_query(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 0.0),
+        ])
+
+        result = json.loads(db.search_within_item("parent1", "quantum topology", limit=3))
+
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("warning", result)
 
     def test_search_within_item_returns_error_for_unknown_item(self):
         self._install_search_state([
@@ -1512,6 +1590,34 @@ class CitationEntryTests(DbTestCase):
         )
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
+
+    def test_get_bibtex_and_citation_for_items_makes_one_export_call_per_item(self):
+        zot = Mock()
+        zot.item.return_value = {
+            "citation": ["<span>cite</span>"],
+            "bib": ["<div>ref</div>"],
+            "bibtex": ["@article{X}"],
+        }
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_keys=["good1", "good2"],
+                    style="apa",
+                    locale="en-GB",
+                )
+            )
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(zot.item.call_count, 2)
+        self.assertEqual([args[0] for args, _kwargs in zot.item.call_args_list], ["GOOD1", "GOOD2"])
+
+        for _args, kwargs in zot.item.call_args_list:
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
+            self.assertEqual(kwargs["style"], "apa")
+            self.assertEqual(kwargs["locale"], "en-GB")
+            self.assertNotIn("content", kwargs)
 
     def test_get_bibtex_and_citation_for_items_requires_at_least_one_key(self):
         result = json.loads(db.get_bibtex_and_citation_for_items())

@@ -126,14 +126,16 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text |
-| `search_within_item` | Find which passages within one known item match a keyword query, using `search_library` results to drill into a specific paper |
+| `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text, with optional plain-text snippets, attachment counts, collection filtering, and case-insensitive item type values like `journalArticle`, `preprint`, `conferencePaper`, `book`, `bookSection`, `thesis`, `report`, and `webpage` |
+| `search_within_item` | Find which passages within one known item match a keyword query, using `search_library` results to drill into a specific paper while returning ranked metadata or attachment-chunk matches with snippets and attachment context |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
-| `get_item` | Full metadata for a single item by key, including attachment filepaths |
+| `get_item` | Full metadata for a single item by key, including the full untruncated abstract and attachment filepaths; search results already include most fields, so use this only when the full abstract is needed |
 | `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for one item key or a list of item keys, typically from `search_library` |
 | `get_recent_items` | Recently added items, sorted by date |
 | `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
+
+Attachment payloads include `linkMode` as a descriptive string (`imported_file`, `imported_url`, `linked_file`, or `linked_url`) instead of Zotero's internal numeric codes.
 
 ## How it works
 
