@@ -72,7 +72,6 @@ class ServerToolTests(unittest.TestCase):
                 query="transformer attention",
                 collection_key="COLL123",
                 item_type="preprint",
-                item_key="ITEM123",
                 limit=5,
             )
 
@@ -81,7 +80,21 @@ class ServerToolTests(unittest.TestCase):
             "transformer attention",
             collection_key="COLL123",
             item_type="preprint",
+            limit=5,
+        )
+
+    def test_search_within_item_delegates_to_db(self):
+        with patch.object(server.db, "search_within_item", return_value='{"results": []}') as db_mock:
+            result = server.search_within_item(
+                item_key="ITEM123",
+                query="transformer attention",
+                limit=5,
+            )
+
+        self.assertEqual(result, '{"results": []}')
+        db_mock.assert_called_once_with(
             item_key="ITEM123",
+            query="transformer attention",
             limit=5,
         )
 

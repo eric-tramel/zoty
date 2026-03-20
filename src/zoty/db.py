@@ -1470,16 +1470,60 @@ def _result_from_parent(
     return result
 
 
+def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "key": parent["key"],
+        "itemType": parent["itemType"],
+        "title": parent["title"],
+        "creators": list(parent["creators"]),
+        "date": parent["date"],
+        "DOI": parent["DOI"],
+        "url": parent["url"],
+        "tags": list(parent["tags"]),
+        "collections": list(parent["collections"]),
+        "abstract": parent["abstract"],
+        "attachments": _get_item_attachments(parent["key"]),
+    }
+
+
+def _result_from_doc(
+    parent: dict[str, Any],
+    *,
+    score: float,
+    doc: dict[str, Any],
+    query_terms: list[str],
+    attachments_by_key: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    snippet_source = doc["text"] if doc["doc_kind"] == "attachment_chunk" else (parent["abstract"] or doc["text"])
+    result = {
+        "item_key": parent["key"],
+        "title": parent["title"],
+        "itemType": parent["itemType"],
+        "score": round(score, 4),
+        "match_type": doc["doc_kind"],
+        "snippet": _snippet_from_text(snippet_source, query_terms),
+        "chunk_index": doc["chunk_index"],
+        "char_start": doc["char_start"],
+        "char_end": doc["char_end"],
+    }
+
+    if doc["doc_kind"] == "attachment_chunk":
+        attachment = attachments_by_key.get(doc["attachment_key"], {})
+        result["attachment_key"] = doc["attachment_key"]
+        result["attachment_title"] = attachment.get("title", "")
+        result["attachment_filepath"] = attachment.get("filepath", "")
+
+    return result
+
+
 def search(
     query: str,
     collection_key: str = "",
     item_type: str = "",
-    item_key: str = "",
     limit: int = 10,
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
     limit = max(1, limit)
-    item_key = item_key.strip().upper()
 
     with _index_lock:
         state = _search_state
@@ -1536,8 +1580,6 @@ def search(
             parent = state.parents.get(parent_key)
             if not parent:
                 continue
-            if item_key and parent["key"].upper() != item_key:
-                continue
             if collection_key and collection_key not in parent["collections"]:
                 continue
             if item_type and parent["itemType"].lower() != item_type.lower():
@@ -1577,6 +1619,121 @@ def search(
         "results": results_payload,
         "query": query,
         "total": len(results_payload),
+    })
+
+
+def search_within_item(
+    item_key: str,
+    query: str,
+    limit: int = 5,
+) -> str:
+    """BM25 ranked passage search within one parent item's metadata and attachment chunks."""
+    limit = max(1, limit)
+    normalized_item_key = item_key.strip().upper()
+
+    with _index_lock:
+        state = _search_state
+
+    if state is None:
+        return json.dumps({
+            "error": "Index is still building, please retry in a moment",
+            "results": [],
+            "query": query,
+            "item_key": normalized_item_key,
+            "total": 0,
+        })
+
+    parent = state.parents.get(normalized_item_key)
+    if parent is None:
+        return json.dumps({
+            "error": f"Item {normalized_item_key} was not found in the search index",
+            "results": [],
+            "query": query,
+            "item_key": normalized_item_key,
+            "total": 0,
+        })
+
+    item_summary = _item_summary_from_parent(parent)
+
+    if state.retriever is None or not state.corpus_docs:
+        return json.dumps({
+            "item": item_summary,
+            "results": [],
+            "query": query,
+            "item_key": normalized_item_key,
+            "total": 0,
+        })
+
+    query_tokens = bm25s.tokenize(
+        [query],
+        stopwords="en",
+        show_progress=False,
+        return_ids=False,
+    )
+    query_terms = _extract_query_terms(query)
+    if not query_terms or not query_tokens or not query_tokens[0]:
+        return json.dumps({
+            "item": item_summary,
+            "results": [],
+            "query": query,
+            "item_key": normalized_item_key,
+            "total": 0,
+        })
+
+    attachments = item_summary["attachments"]
+    attachments_by_key = {
+        attachment["key"]: attachment
+        for attachment in attachments
+    }
+
+    max_docs = len(state.corpus_docs)
+    batch_size = min(max(limit * 20, 200), max_docs)
+    matches: list[dict[str, Any]] = []
+    seen_doc_ids: set[str] = set()
+
+    while batch_size > 0:
+        results, scores = state.retriever.retrieve(
+            query_tokens,
+            corpus=state.corpus_docs,
+            k=batch_size,
+            show_progress=False,
+        )
+
+        found_enough = False
+        for index in range(results.shape[1]):
+            doc = results[0, index]
+            score = float(scores[0, index])
+            if score <= 0:
+                continue
+            if doc["parent_key"] != normalized_item_key:
+                continue
+            if doc["doc_id"] in seen_doc_ids:
+                continue
+
+            seen_doc_ids.add(doc["doc_id"])
+            matches.append(_result_from_doc(
+                parent,
+                score=score,
+                doc=doc,
+                query_terms=query_terms,
+                attachments_by_key=attachments_by_key,
+            ))
+
+            if len(matches) >= limit:
+                found_enough = True
+                break
+
+        if found_enough or batch_size >= max_docs:
+            break
+
+        batch_size = min(max_docs, batch_size * 2)
+
+    return json.dumps({
+        "item": item_summary,
+        "results": matches[:limit],
+        "query": query,
+        "item_key": normalized_item_key,
+        "total": len(matches[:limit]),
     })
 
 

@@ -18,7 +18,6 @@ def search_library(
     query: str,
     collection_key: str = "",
     item_type: str = "",
-    item_key: str = "",
     limit: int = 10,
 ) -> str:
     """BM25 ranked search over title, abstract, and indexed attachment full text.
@@ -27,7 +26,6 @@ def search_library(
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
         collection_key: Optional Zotero collection key to filter results
         item_type: Optional item type filter (e.g. "journalArticle", "preprint", "conferencePaper")
-        item_key: Optional Zotero parent item key to restrict the search to one paper
         limit: Maximum results to return (default: 10)
 
     Returns:
@@ -38,9 +36,24 @@ def search_library(
         query,
         collection_key=collection_key,
         item_type=item_type,
-        item_key=item_key,
         limit=limit,
     )
+
+
+@mcp_server.tool()
+def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
+    """BM25 ranked passage search within one Zotero item.
+
+    Args:
+        item_key: Zotero parent item key to search within
+        query: Search keywords to match against that item's metadata and attachment chunks
+        limit: Maximum number of passage matches to return (default: 5)
+
+    Returns:
+        JSON with the item metadata plus ranked within-item matches, including
+        snippets and attachment context for chunk hits.
+    """
+    return db.search_within_item(item_key=item_key, query=query, limit=limit)
 
 
 @mcp_server.tool()

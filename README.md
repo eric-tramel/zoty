@@ -6,7 +6,7 @@ Lightweight Zotero MCP server for AI agents.
 
 ## What it does
 
-MCP server that connects AI agents to your local Zotero library. Provides 7 tools: BM25-ranked search over titles, abstracts, and indexed attachment full text, collection browsing, item lookup, BibTeX plus formatted citation export for item keys returned by search, and paper ingestion by arXiv ID or DOI with automatic PDF attachment.
+MCP server that connects AI agents to your local Zotero library. Provides 8 tools: BM25-ranked search over titles, abstracts, and indexed attachment full text, within-item passage search, collection browsing, item lookup, BibTeX plus formatted citation export for item keys returned by search, and paper ingestion by arXiv ID or DOI with automatic PDF attachment.
 
 ## Requirements
 
@@ -126,7 +126,8 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets and filters for collection, item type, or a single item key |
+| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets and filters for collection or item type |
+| `search_within_item` | BM25-ranked passage search within one Zotero item, returning top metadata or attachment-chunk matches with snippets and attachment context |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
 | `get_item` | Full metadata for a single item by key, including attachment filepaths |
