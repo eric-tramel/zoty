@@ -39,6 +39,13 @@ _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_VIEW_MAX_CREATORS = 5
+_EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
+_LINK_MODE_LABELS = {
+    0: "imported_file",
+    1: "imported_url",
+    2: "linked_file",
+    3: "linked_url",
+}
 
 @dataclass
 class _ParentRecord:
@@ -195,6 +202,13 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+def _format_link_mode(value: Any) -> str:
+    mode = _safe_int(value)
+    if mode is None:
+        return "unknown"
+    return _LINK_MODE_LABELS.get(mode, f"unknown({mode})")
+
+
 def _safe_file_stats(path_str: str) -> tuple[int | None, int | None]:
     if not path_str:
         return None, None
@@ -285,7 +299,7 @@ def _get_item_attachments(item_key: str) -> list[dict]:
             "key": attachment_key,
             "title": title,
             "contentType": content_type or "",
-            "linkMode": link_mode,
+            "linkMode": _format_link_mode(link_mode),
             "filepath": filepath,
         })
 
@@ -1575,6 +1589,7 @@ def _search_response(
     requested_limit: int,
     applied_limit: int,
     error: str | None = None,
+    warning: str | None = None,
 ) -> str:
     response: dict[str, Any] = {
         "results": results,
@@ -1587,6 +1602,8 @@ def _search_response(
     }
     if error is not None:
         response["error"] = error
+    if warning is not None:
+        response["warning"] = warning
     return json.dumps(response)
 
 
@@ -1670,6 +1687,7 @@ def search(
             [],
             requested_limit=requested_limit,
             applied_limit=applied_limit,
+            warning=_EMPTY_QUERY_WARNING,
         )
 
     max_docs = len(state.corpus_docs)
@@ -1796,6 +1814,7 @@ def search_within_item(
             "query": query,
             "item_key": normalized_item_key,
             "total": 0,
+            "warning": _EMPTY_QUERY_WARNING,
         })
 
     attachments_by_key = {

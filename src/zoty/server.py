@@ -108,7 +108,9 @@ def get_bibtex_and_citation_for_items(
         item_key: A single Zotero item key for one item; typically returned by search_library
         item_keys: A list of Zotero item keys for batch use; typically returned by search_library
         item_key and item_keys can be combined, and at least one must be provided.
-        style: Citation style to use for formatted citation and bibliography text
+        style: CSL style ID to use for formatted citation and bibliography text (for example,
+            'apa', 'ieee', or 'chicago-note-bibliography'); see the Zotero Style Repository
+            for the full list
         locale: Citation locale to use for formatted citation and bibliography text
 
     Returns:

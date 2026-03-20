@@ -135,6 +135,8 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 | `get_recent_items` | Recently added items, sorted by date |
 | `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
 
+Attachment payloads include `linkMode` as a descriptive string (`imported_file`, `imported_url`, `linked_file`, or `linked_url`) instead of Zotero's internal numeric codes.
+
 ## How it works
 
 Read operations still use [pyzotero](https://github.com/urschrei/pyzotero) for collection/item APIs, but search now runs off a persistent sidecar index under `~/.cache/zoty/fulltext-index`. zoty reads Zotero metadata from `zotero.sqlite` in immutable mode, reuses Zotero's extracted attachment text caches (`.zotero-ft-cache`) for PDF/EPUB/HTML full text, chunks that text locally, and rebuilds immutable BM25 snapshots in the background. At startup zoty loads the active snapshot synchronously if one exists, then queues a refresh when Zotero content changed.
