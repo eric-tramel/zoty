@@ -44,6 +44,7 @@ _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
 _ITEM_DETAIL_MAX_WORKERS = 4
 _DETAIL_VIEW_MAX_CREATORS = 15
+_BIBTEX_MAX_AUTHORS = 10
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
     0: "imported_file",
@@ -475,6 +476,13 @@ def _empty_item_summary(item_key: str = "") -> dict[str, str]:
     }
 
 
+def _error_payload(error: str, *, key: str = "") -> dict[str, str]:
+    payload = {"error": error}
+    if key:
+        payload["key"] = key
+    return payload
+
+
 def _normalize_item_keys(item_key: str = "", item_keys: list[str] | None = None) -> list[str]:
     """Normalize a single key and/or key list into a clean ordered list."""
     normalized: list[str] = []
@@ -565,9 +573,114 @@ def _strip_bibtex_field(bibtex: str, field_name: str) -> str:
     return "".join(output)
 
 
+def _truncate_bibtex_authors(bibtex: str, *, max_authors: int = _BIBTEX_MAX_AUTHORS) -> str:
+    if not bibtex or max_authors < 0:
+        return bibtex
+
+    pattern = re.compile(
+        r"(^[ \t]*author[ \t]*=[ \t]*\{)(.*?)(\}[ \t]*,?[ \t]*$)",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        authors = [
+            author.strip()
+            for author in re.sub(r"\s+", " ", match.group(2)).split(" and ")
+            if author.strip()
+        ]
+        if len(authors) <= max_authors:
+            return match.group(0)
+        truncated = " and ".join([*authors[:max_authors], "others"])
+        return f"{match.group(1)}{truncated}{match.group(3)}"
+
+    return pattern.sub(replace, bibtex, count=1)
+
+
 def _compact_bibtex_export(bibtex: str) -> str:
     """Drop fields that duplicate data already provided by other tools."""
-    return _strip_bibtex_field(bibtex, "abstract").strip()
+    compacted = _strip_bibtex_field(bibtex, "abstract")
+    compacted = _strip_bibtex_field(compacted, "file")
+    compacted = _truncate_bibtex_authors(compacted)
+    return compacted.strip()
+
+
+def _response_status_code(exc: Exception) -> int | None:
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
+
+    match = re.search(r"\bCode:\s*(\d{3})\b", str(exc), re.IGNORECASE)
+    if match is not None:
+        return int(match.group(1))
+    return None
+
+
+def _response_url(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    url = getattr(response, "url", "")
+    if isinstance(url, str) and url:
+        return url
+
+    match = re.search(r"\bURL:\s*(\S+)", str(exc), re.IGNORECASE)
+    if match is not None:
+        return match.group(1)
+    return ""
+
+
+def _response_body(exc: Exception) -> str:
+    match = re.search(r"\bResponse:\s*(.*)", str(exc), re.IGNORECASE | re.DOTALL)
+    if match is None:
+        return ""
+    return " ".join(match.group(1).split())
+
+
+def _sanitize_external_error_message(exc: Exception, *, fallback: str) -> str:
+    message = " ".join(str(exc).split())
+    if not message:
+        return fallback
+
+    sanitized = re.sub(r"https?://\S+", "", message)
+    sanitized = re.sub(r"^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", "", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"(?i)\b(?:method|code|response|body)\b[^.;]*", "", sanitized)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip(" .,:;-")
+    if sanitized and sanitized.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+        return sanitized
+
+    status = _response_status_code(exc)
+    if status is not None:
+        return f"request failed with status {status}"
+    return fallback
+
+
+def _item_fetch_error_message(item_key: str, exc: Exception) -> str:
+    status = _response_status_code(exc)
+    if status == 404 or "not found" in str(exc).lower():
+        return f"Item {item_key} was not found"
+    detail = _sanitize_external_error_message(exc, fallback="request failed")
+    return f"Failed to fetch item {item_key}: {detail}"
+
+
+def _citation_fetch_error_message(item_key: str, style: str, exc: Exception) -> str:
+    status = _response_status_code(exc)
+    url = _response_url(exc).lower()
+    lowered = str(exc).lower()
+    response_body = _response_body(exc).lower()
+
+    if status == 404 and (
+        "/styles/" in url
+        or "citationstyles.org" in url
+        or "/styles/" in lowered
+        or "citationstyles.org" in lowered
+        or "citation style" in response_body
+        or ("style" in response_body and "not found" in response_body)
+    ):
+        return f"Citation style {style} was not found"
+    if status == 404 or "not found" in lowered:
+        return f"Item {item_key} was not found"
+
+    detail = _sanitize_external_error_message(exc, fallback="request failed")
+    return f"Failed to fetch citation entry: {detail}"
 
 
 def _fetch_item_exports(
@@ -2308,9 +2421,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
                 "total": 0,
             })
 
-        payload = _empty_item_payload()
-        payload["error"] = "Provide item_key"
-        return json.dumps(payload)
+        return json.dumps(_error_payload("Provide item_key"))
 
     attachments_by_parent = _get_item_attachments_by_parent(requested_keys)
 
@@ -2319,9 +2430,12 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
         try:
             item = _fetch_item_detail(normalized_item_key)
         except Exception as exc:
-            payload = _empty_item_payload(normalized_item_key)
-            payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
-            return json.dumps(payload)
+            return json.dumps(
+                _error_payload(
+                    _item_fetch_error_message(normalized_item_key, exc),
+                    key=normalized_item_key,
+                )
+            )
 
         return json.dumps(
             _item_to_dict(
@@ -2345,7 +2459,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
             except Exception as exc:
                 errors.append({
                     "key": key,
-                    "error": f"Failed to fetch item {key}: {exc}",
+                    "error": _item_fetch_error_message(key, exc),
                 })
                 continue
 
@@ -2405,7 +2519,7 @@ def get_bibtex_and_citation_for_items(
         except Exception as exc:
             errors.append({
                 "key": key,
-                "error": f"Failed to fetch citation entry: {exc}",
+                "error": _citation_fetch_error_message(key, style, exc),
             })
     else:
         max_workers = min(_CITATION_EXPORT_MAX_WORKERS, len(requested_keys))
@@ -2421,7 +2535,7 @@ def get_bibtex_and_citation_for_items(
                 except Exception as exc:
                     errors.append({
                         "key": key,
-                        "error": f"Failed to fetch citation entry: {exc}",
+                        "error": _citation_fetch_error_message(key, style, exc),
                     })
 
     payload: dict[str, Any] = {
@@ -2434,7 +2548,7 @@ def get_bibtex_and_citation_for_items(
     if errors:
         payload["errors"] = errors
         if not results:
-            payload["error"] = "Failed to fetch citation entries"
+            payload["error"] = errors[0]["error"] if len(errors) == 1 else "Failed to fetch citation entries"
 
     return json.dumps(payload)
 
