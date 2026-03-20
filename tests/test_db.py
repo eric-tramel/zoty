@@ -1591,6 +1591,34 @@ class CitationEntryTests(DbTestCase):
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
 
+    def test_get_bibtex_and_citation_for_items_makes_one_export_call_per_item(self):
+        zot = Mock()
+        zot.item.return_value = {
+            "citation": ["<span>cite</span>"],
+            "bib": ["<div>ref</div>"],
+            "bibtex": ["@article{X}"],
+        }
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_keys=["good1", "good2"],
+                    style="apa",
+                    locale="en-GB",
+                )
+            )
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(zot.item.call_count, 2)
+        self.assertEqual([args[0] for args, _kwargs in zot.item.call_args_list], ["GOOD1", "GOOD2"])
+
+        for _args, kwargs in zot.item.call_args_list:
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
+            self.assertEqual(kwargs["style"], "apa")
+            self.assertEqual(kwargs["locale"], "en-GB")
+            self.assertNotIn("content", kwargs)
+
     def test_get_bibtex_and_citation_for_items_requires_at_least_one_key(self):
         result = json.loads(db.get_bibtex_and_citation_for_items())
 
