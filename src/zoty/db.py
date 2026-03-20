@@ -1695,12 +1695,13 @@ def _result_from_parent(
     attachment_count: int,
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    date_value = _normalize_item_date(str(parent.get("date", "") or ""))
     result = {
         "key": parent["key"],
         "itemType": parent["itemType"],
         "title": parent["title"],
         "creators": _truncate_creator_names(parent["creators"]),
-        "date": parent["date"],
+        "date": date_value,
         "DOI": parent["DOI"],
         "url": parent["url"],
         "tags": list(parent["tags"]),

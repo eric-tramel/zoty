@@ -1100,6 +1100,40 @@ class SearchBehaviorTests(DbTestCase):
             ],
         )
 
+    def test_search_normalizes_duplicated_iso_dates_in_results(self):
+        metadata_doc = {
+            "doc_id": "meta:PARENT1",
+            "parent_key": "PARENT1",
+            "attachment_key": "",
+            "doc_kind": "metadata",
+            "chunk_index": 0,
+            "char_start": 0,
+            "char_end": 60,
+            "token_count": 8,
+            "text": "Example Paper Example Paper abstract novelty signal",
+            "text_hash": "hash-meta",
+        }
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Example Paper",
+                "abstract": "Example abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2025-09-17 2025-09-17",
+                "DOI": "10.1000/example",
+                "url": "https://example.org/paper",
+            }
+        }
+        self._install_search_state([(metadata_doc, 6.5)], parents=parents)
+
+        result = json.loads(db.search("novelty"))
+
+        self.assertEqual(result["items"][0]["date"], "2025-09-17")
+
     def test_metadata_query_uses_abstract_snippet_without_attachment_key(self):
         metadata_doc = {
             "doc_id": "meta:PARENT1",
