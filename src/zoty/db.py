@@ -1961,13 +1961,20 @@ def _search_response(
     *,
     requested_limit: int,
     applied_limit: int,
+    total: int | None = None,
+    returned_count: int | None = None,
     error: str | None = None,
     warning: str | None = None,
 ) -> str:
+    if total is None:
+        total = len(items)
+    if returned_count is None:
+        returned_count = len(items)
     response: dict[str, Any] = {
         "items": items,
         "query": query,
-        "total": len(items),
+        "total": total,
+        "returned_count": returned_count,
         "requested_limit": requested_limit,
         "applied_limit": applied_limit,
         "limit_cap": _SEARCH_RESULT_LIMIT_CAP,
@@ -1999,6 +2006,48 @@ def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
         "key": parent["key"],
         "title": parent["title"],
     }
+
+
+def _search_result_identity(parent: dict[str, Any]) -> tuple[str, str]:
+    doi = _normalize_plain_text(str(parent.get("DOI", "") or "")).casefold()
+    if doi:
+        return ("doi", doi)
+
+    url = _normalize_plain_text(str(parent.get("url", "") or "")).casefold()
+    if url:
+        return ("url", url)
+
+    return ("key", str(parent.get("key", "") or "").strip().casefold())
+
+
+def _search_result_preference(parent: dict[str, Any], score: float) -> tuple[Any, ...]:
+    collections = [
+        collection
+        for collection in parent.get("collections", [])
+        if isinstance(collection, str) and collection.strip()
+    ]
+    tags = [
+        tag
+        for tag in parent.get("tags", [])
+        if isinstance(tag, str) and tag.strip()
+    ]
+    creators = [
+        creator
+        for creator in parent.get("creators", [])
+        if isinstance(creator, str) and creator.strip()
+    ]
+    return (
+        1 if collections else 0,
+        len(collections),
+        len(tags),
+        len(creators),
+        len(str(parent.get("abstract", "") or "")),
+        1 if str(parent.get("DOI", "") or "").strip() else 0,
+        1 if str(parent.get("url", "") or "").strip() else 0,
+        score,
+        str(parent.get("dateModified", "") or ""),
+        str(parent.get("key", "") or ""),
+    )
 
 
 def _multi_item_summaries_from_matches(
@@ -2110,6 +2159,18 @@ def _search_within_item_response(
     return json.dumps(payload)
 
 
+def _count_non_skipped_top_level_items(items: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for item in items
+        if item.get("data", {}).get("itemType") not in _SKIP_TYPES
+    )
+
+
+def _count_non_skipped_top_level_items_for_zot(zot: zotero.Zotero) -> int:
+    return _count_non_skipped_top_level_items(zot.everything(zot.top()))
+
+
 def search(
     query: str,
     collection_key: str = "",
@@ -2190,17 +2251,9 @@ def search(
             warning=_EMPTY_QUERY_WARNING,
         )
 
-    if applied_limit == 0:
-        return _search_response(
-            query,
-            [],
-            requested_limit=requested_limit,
-            applied_limit=applied_limit,
-        )
-
     max_docs = len(state.corpus_docs)
     batch_size = min(max(applied_limit * 20, 200), max_docs)
-    best_by_parent: dict[str, tuple[float, dict[str, Any]]] = {}
+    best_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
 
     while batch_size > 0:
         results, scores = state.retriever.retrieve(
@@ -2210,7 +2263,6 @@ def search(
             show_progress=False,
         )
 
-        found_enough = False
         for index in range(results.shape[1]):
             doc = results[0, index]
             score = float(scores[0, index])
@@ -2226,45 +2278,58 @@ def search(
             if normalized_item_type and parent["itemType"].lower() != normalized_item_type:
                 continue
 
-            previous = best_by_parent.get(parent_key)
-            if previous is None or score > previous[0]:
-                best_by_parent[parent_key] = (score, doc)
+            identity = _search_result_identity(parent)
+            preference = _search_result_preference(parent, score)
+            previous = best_by_identity.get(identity)
+            if previous is None or preference > previous["preference"]:
+                best_by_identity[identity] = {
+                    "parent_key": parent_key,
+                    "score": score,
+                    "doc": doc,
+                    "preference": preference,
+                }
 
-            if len(best_by_parent) >= applied_limit:
-                found_enough = True
-                break
-
-        if found_enough or batch_size >= max_docs:
+        if batch_size >= max_docs:
             break
 
         batch_size = min(max_docs, batch_size * 2)
 
+    ordered_entries = list(best_by_identity.values())
+    ordered_entries.sort(key=lambda entry: state.parents[entry["parent_key"]]["key"])
+    ordered_entries.sort(
+        key=lambda entry: state.parents[entry["parent_key"]]["dateModified"],
+        reverse=True,
+    )
+    ordered_entries.sort(key=lambda entry: entry["score"], reverse=True)
+    total_matches = len(ordered_entries)
+    returned_entries = ordered_entries[:applied_limit]
+    selected_parent_keys = [entry["parent_key"] for entry in returned_entries]
+
     if include_attachments:
-        attachments_by_parent = _get_item_attachments_by_parent(list(best_by_parent))
+        attachments_by_parent = _get_item_attachments_by_parent(selected_parent_keys)
         attachment_counts = {
             parent_key: len(attachments_by_parent.get(parent_key, []))
-            for parent_key in best_by_parent
+            for parent_key in selected_parent_keys
         }
     else:
-        attachment_counts = _get_item_attachment_counts(list(best_by_parent))
+        attachment_counts = _get_item_attachment_counts(selected_parent_keys)
         attachments_by_parent = {}
-    results_payload = [
-        _result_from_parent(
-            state.parents[parent_key],
-            score=score,
-            best_doc=doc,
-            query_terms=query_terms,
-            attachment_count=attachment_counts.get(parent_key, 0),
-            attachments=attachments_by_parent.get(parent_key) if include_attachments else None,
-            collection_name_by_key=collection_name_by_key,
-        )
-        for parent_key, (score, doc) in best_by_parent.items()
-    ]
 
-    results_payload.sort(key=lambda row: row["key"])
-    results_payload.sort(key=lambda row: row["_date_modified"], reverse=True)
-    results_payload.sort(key=lambda row: row["score"], reverse=True)
-    results_payload = results_payload[:applied_limit]
+    results_payload = []
+    for entry in returned_entries:
+        parent_key = entry["parent_key"]
+        results_payload.append(
+            _result_from_parent(
+                state.parents[parent_key],
+                score=entry["score"],
+                best_doc=entry["doc"],
+                query_terms=query_terms,
+                attachment_count=attachment_counts.get(parent_key, 0),
+                attachments=attachments_by_parent.get(parent_key) if include_attachments else None,
+                collection_name_by_key=collection_name_by_key,
+            )
+        )
+
     for row in results_payload:
         row.pop("_date_modified", None)
 
@@ -2273,6 +2338,8 @@ def search(
         results_payload,
         requested_limit=requested_limit,
         applied_limit=applied_limit,
+        total=total_matches,
+        returned_count=len(results_payload),
     )
 
 
@@ -2547,7 +2614,7 @@ def list_collections() -> str:
     return json.dumps({"collections": result, "total": len(result)})
 
 
-def list_collection_items(collection_key: str, limit: int = 50) -> str:
+def list_collection_items(collection_key: str, limit: int = 25) -> str:
     """Return items in a specific collection."""
     requested_limit, applied_limit = _apply_limit_cap(limit, _LIST_RESULT_LIMIT_CAP)
     normalized_collection_key = collection_key.strip().upper()
@@ -2557,6 +2624,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
             "collection_found": False,
             "items": [],
             "total": 0,
+            "returned_count": 0,
             **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             "error": "Provide collection_key",
         })
@@ -2575,16 +2643,22 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
                 or data.get("collectionName", "")
                 or collection_name_by_key.get(key, "")
             )
-        collection_found = any(
-            collection.get("data", {}).get("key", "").upper() == normalized_collection_key
-            for collection in collections
+        collection = next(
+            (
+                collection
+                for collection in collections
+                if collection.get("data", {}).get("key", "").upper() == normalized_collection_key
+            ),
+            None,
         )
-        if not collection_found:
+        collection_total = int(collection.get("meta", {}).get("numItems", 0)) if collection else 0
+        if collection is None:
             return json.dumps({
                 "collection_key": normalized_collection_key,
                 "collection_found": False,
                 "items": [],
                 "total": 0,
+                "returned_count": 0,
                 **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
                 "error": f"Collection {normalized_collection_key} was not found",
             })
@@ -2593,7 +2667,8 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
                 "collection_key": normalized_collection_key,
                 "collection_found": True,
                 "items": [],
-                "total": 0,
+                "total": collection_total,
+                "returned_count": 0,
                 **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             })
         items = zot.collection_items(normalized_collection_key, limit=applied_limit)
@@ -2603,6 +2678,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
             "collection_found": False,
             "items": [],
             "total": 0,
+            "returned_count": 0,
             **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             "error": f"Failed to fetch collection items: {exc}",
         })
@@ -2633,7 +2709,8 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         "collection_key": normalized_collection_key,
         "collection_found": True,
         "items": result,
-        "total": len(result),
+        "total": collection_total,
+        "returned_count": len(result),
         **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
     })
 
@@ -2791,15 +2868,16 @@ def get_bibtex_and_citation_for_items(
 def get_recent_items(limit: int = 10) -> str:
     """Recently added items, sorted by dateAdded descending."""
     requested_limit, applied_limit = _apply_limit_cap(limit, _LIST_RESULT_LIMIT_CAP)
-    if applied_limit == 0:
-        return json.dumps({
-            "items": [],
-            "total": 0,
-            **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
-        })
-
     try:
         zot = _get_zot()
+        total = _count_non_skipped_top_level_items_for_zot(zot)
+        if applied_limit == 0:
+            return json.dumps({
+                "items": [],
+                "total": total,
+                "returned_count": 0,
+                **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
+            })
         items = zot.items(
             limit=applied_limit * 3,
             sort="dateAdded",
@@ -2810,6 +2888,7 @@ def get_recent_items(limit: int = 10) -> str:
         return json.dumps({
             "items": [],
             "total": 0,
+            "returned_count": 0,
             **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             "error": f"Failed to fetch recent items: {exc}",
         })
@@ -2828,6 +2907,7 @@ def get_recent_items(limit: int = 10) -> str:
     ]
     return json.dumps({
         "items": result,
-        "total": len(result),
+        "total": total,
+        "returned_count": len(result),
         **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
     })

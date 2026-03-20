@@ -91,14 +91,18 @@ class ServerToolTests(unittest.TestCase):
     def test_list_and_recent_tool_docstrings_describe_fields_and_caps(self):
         list_doc = " ".join(server.list_collection_items.__doc__.split())
         recent_doc = " ".join(server.get_recent_items.__doc__.split())
-        self.assertIn("default: 50, capped at 25", list_doc)
+        self.assertIn("default: 25, capped at 25", list_doc)
         self.assertIn("`limit=0` returns an empty result set", list_doc)
         self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", list_doc)
+        self.assertIn("`total`", list_doc)
+        self.assertIn("`returned_count`", list_doc)
         self.assertIn("truncated `abstract` (500 chars)", list_doc)
         self.assertIn("`collections` as `{key, name}` pairs", list_doc)
         self.assertIn("default: 10, capped at 25", recent_doc)
         self.assertIn("`limit=0` returns an empty result set", recent_doc)
         self.assertIn("metadata (`requested_limit`, `applied_limit`, `limit_cap`, `limit_capped`)", recent_doc)
+        self.assertIn("`total`", recent_doc)
+        self.assertIn("`returned_count`", recent_doc)
         self.assertIn("`date_added`", recent_doc)
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
         self.assertIn("`collections` as `{key, name}` pairs", recent_doc)
@@ -127,12 +131,15 @@ class ServerToolTests(unittest.TestCase):
         normalized_doc = " ".join(doc.split())
 
         self.assertIn("abstract text truncated to 500 characters", doc)
+        self.assertIn("duplicate parent items", normalized_doc.lower())
         self.assertIn("include_attachments", doc)
         self.assertIn("invalid `collection_key` / `item_type` filters", doc)
         self.assertIn(
             "values not present in the current search index return no items plus a warning",
             normalized_doc,
         )
+        self.assertIn("returned_count", normalized_doc)
+        self.assertIn("`total` reports the deduplicated match count", normalized_doc)
         self.assertIn("default: 10, capped at 25", normalized_doc)
         self.assertIn("`collections` as `{key, name}` pairs", doc)
 
@@ -174,6 +181,7 @@ class ServerToolTests(unittest.TestCase):
         recent_doc = " ".join(server.get_recent_items.__doc__.split())
         get_item_doc = " ".join(server.get_item.__doc__.split())
         self.assertIn("under `items`", server.search_library.__doc__)
+        self.assertIn("`returned_count`", server.search_library.__doc__)
         self.assertIn("`matches`", server.search_within_item.__doc__)
         self.assertIn("attachment_key", server.search_within_item.__doc__)
         self.assertIn("`returned_match_count`", server.search_within_item.__doc__)
@@ -183,6 +191,8 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("include parent `key` only for multi-item calls", search_within_doc)
         self.assertIn("attachment_count", list_doc)
         self.assertIn("attachment_count", recent_doc)
+        self.assertIn("returned_count", list_doc)
+        self.assertIn("returned_count", recent_doc)
         self.assertIn("date_added", recent_doc)
         self.assertIn("`collections` as `{key, name}` pairs", list_doc)
         self.assertIn("`collections` as `{key, name}` pairs", recent_doc)
@@ -243,6 +253,9 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("journalArticle", description)
         self.assertIn("webpage", description)
         self.assertIn("returns no items and a warning", description)
+        self.assertIn("share a DOI or URL", description)
+        self.assertIn("returned_count", description)
+        self.assertIn("deduplicated match count", description)
 
     def test_limit_parameter_schemas_describe_clamping_and_metadata(self):
         search_schema = _get_registered_tool("search_library").inputSchema
@@ -253,8 +266,13 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", search_schema["properties"]["limit"]["description"])
         self.assertIn("Values below 0 are treated as 0, values above 25 are clamped to 25", list_schema["properties"]["limit"]["description"])
         self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", list_schema["properties"]["limit"]["description"])
+        self.assertIn("`total` for the available top-level non-skipped items", list_schema["properties"]["limit"]["description"])
+        self.assertIn("`returned_count` for the number actually included under `items`", list_schema["properties"]["limit"]["description"])
+        self.assertEqual(list_schema["properties"]["limit"]["default"], 25)
         self.assertIn("Values below 0 are treated as 0, values above 25 are clamped to 25", recent_schema["properties"]["limit"]["description"])
         self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", recent_schema["properties"]["limit"]["description"])
+        self.assertIn("`total` for the available top-level non-skipped items", recent_schema["properties"]["limit"]["description"])
+        self.assertIn("`returned_count` for the number actually included under `items`", recent_schema["properties"]["limit"]["description"])
 
     def test_get_item_tool_description_mentions_batch_inputs_and_response_shape(self):
         description = _get_registered_tool("get_item").description
