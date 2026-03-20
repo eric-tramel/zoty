@@ -94,8 +94,8 @@ def search_library(
         `attachment_count`, `collections` as `{key, name}` pairs, optional `attachments` when
         `include_attachments=True`, optional plain-text snippets, warnings for
         invalid `collection_key` / `item_type` filters or empty queries, and
-        limit metadata. Duplicate parent items that represent the same paper
-        are collapsed before limiting, preferring the richer record when
+        limit metadata. Duplicate parent items that share a DOI or URL are
+        collapsed before limiting, preferring the richer record when
         duplicates exist. `total` reports the deduplicated match count and
         `returned_count` reports how many items were actually returned.
     """
@@ -174,10 +174,13 @@ def list_collection_items(collection_key: str, limit: int = 25) -> str:
             `limit_capped` so callers can detect clamping.
 
     Returns:
-        JSON with `collection_key`, `collection_found`, `items`, and limit
-        metadata (`requested_limit`, `applied_limit`, `limit_cap`,
-        `limit_capped`). Each item includes `key`, `title`, `creators`,
-        `date`, truncated `abstract` (500 chars), `attachment_count`,
+        JSON with `collection_key`, `collection_found`, `items`, `total`,
+        `returned_count`, and limit metadata (`requested_limit`,
+        `applied_limit`, `limit_cap`, `limit_capped`). `total` reports the
+        collection's available top-level item count from Zotero metadata and
+        `returned_count` reports how many items were actually included under
+        `items`. Each item includes `key`, `title`, `creators`, `date`,
+        truncated `abstract` (500 chars), `attachment_count`,
         `collections` as `{key, name}` pairs, and other summary fields.
     """
     return db.list_collection_items(collection_key, limit=limit)
@@ -258,11 +261,13 @@ def get_recent_items(limit: int = 10) -> str:
             `limit_capped` so callers can detect clamping.
 
     Returns:
-        JSON with `items`, `total`, and limit metadata (`requested_limit`,
-        `applied_limit`, `limit_cap`, `limit_capped`). Each item includes
-        `key`, `title`, `creators`, `date`, `date_added`, truncated
-        `abstract` (500 chars), `attachment_count`, `collections` as
-        `{key, name}` pairs, and other summary fields.
+        JSON with `items`, `total`, `returned_count`, and limit metadata
+        (`requested_limit`, `applied_limit`, `limit_cap`, `limit_capped`).
+        `total` reports the available top-level non-skipped item count and
+        `returned_count` reports how many items were actually included under
+        `items`. Each item includes `key`, `title`, `creators`, `date`,
+        `date_added`, truncated `abstract` (500 chars), `attachment_count`,
+        `collections` as `{key, name}` pairs, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 
@@ -302,7 +307,7 @@ def _augment_tool_schemas() -> None:
             f"{search_tool.description}\n\n"
             f"Canonical `item_type` values: {', '.join(f'`{item_type}`' for item_type in _SEARCH_LIBRARY_ITEM_TYPES)}. "
             "If the requested value is not present in the current search index, the response returns no items and a warning. "
-            "Duplicate parent items that represent the same paper are collapsed before limiting, preferring the richer record when duplicates exist. "
+            "Duplicate parent items that share a DOI or URL are collapsed before limiting, preferring the richer record when duplicates exist. "
             "Response metadata includes `returned_count` for the items included under `items` and `total` for the deduplicated match count."
         )
 
@@ -322,7 +327,8 @@ def _augment_tool_schemas() -> None:
         properties.setdefault("limit", {})["description"] = (
             "Requested items to return. Values below 0 are treated as 0, values above "
             f"{_LIST_RESULT_LIMIT_CAP} are clamped to {_LIST_RESULT_LIMIT_CAP}, and the response "
-            "reports `requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`."
+            "reports `requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`. "
+            "The response also reports `total` for the available top-level non-skipped items and `returned_count` for the number actually included under `items`."
         )
 
     tool = mcp_server._tool_manager.get_tool("get_bibtex_and_citation_for_items")
