@@ -158,14 +158,20 @@ def get_recent_items(limit: int = 10) -> str:
 def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> str:
     """Add a paper to Zotero by arXiv ID or DOI.
 
+    Provide at least one of `arxiv_id` or `doi`. If both are provided,
+    `arxiv_id` takes precedence.
+
     Fetches metadata from arXiv or CrossRef, creates the item via the Zotero
     connector, downloads the PDF, and optionally assigns to a collection.
     PDF attachment and collection assignment use the Zotero JS API via the
     zoty-bridge plugin. Zotero desktop must be running.
 
     Args:
-        arxiv_id: arXiv paper ID (e.g. "2301.07041" or "arxiv:2301.07041")
-        doi: DOI (e.g. "10.1038/s41586-021-03819-2")
+        arxiv_id: arXiv paper ID (e.g. "2301.07041" or "arxiv:2301.07041").
+            Required unless `doi` is provided. Takes precedence when both are
+            provided.
+        doi: DOI (e.g. "10.1038/s41586-021-03819-2"). Required unless
+            `arxiv_id` is provided. Ignored when `arxiv_id` is provided.
         collection_key: Optional Zotero collection key to add the paper to (from list_collections)
 
     Returns:

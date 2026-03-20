@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -124,3 +125,17 @@ class ServerToolTests(unittest.TestCase):
             style="apa",
             locale="en-GB",
         )
+
+    def test_add_paper_tool_description_mentions_required_inputs_and_precedence(self):
+        async def get_tool_description():
+            tools = await server.mcp_server.list_tools()
+            for tool in tools:
+                if tool.name == "add_paper":
+                    return tool.description
+            self.fail("add_paper tool was not registered")
+
+        description = asyncio.run(get_tool_description())
+
+        self.assertIn("Provide at least one of `arxiv_id` or `doi`.", description)
+        self.assertIn("If both are provided,", description)
+        self.assertIn("`arxiv_id` takes precedence.", description)
