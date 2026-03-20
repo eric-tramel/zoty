@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from contextlib import closing
 from pathlib import Path
@@ -49,16 +50,19 @@ class DbTestCase(unittest.TestCase):
         self.original_db = db._ZOTERO_DB
         self.original_storage = db._ZOTERO_STORAGE
         self.original_sidecar_root = db._SIDECAR_ROOT
+        self.original_zot = db._zot
 
         db._ZOTERO_DB = Path(self.temp_dir.name) / "zotero.sqlite"
         db._ZOTERO_STORAGE = Path(self.temp_dir.name) / "storage"
         db._SIDECAR_ROOT = Path(self.temp_dir.name) / "sidecar"
         db._ZOTERO_STORAGE.mkdir(parents=True, exist_ok=True)
+        db._zot = None
 
     def tearDown(self):
         db._ZOTERO_DB = self.original_db
         db._ZOTERO_STORAGE = self.original_storage
         db._SIDECAR_ROOT = self.original_sidecar_root
+        db._zot = self.original_zot
         with db._index_lock:
             db._search_state = None
             db._refresh_in_progress = False
@@ -312,6 +316,37 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachment_count"], 0)
         self.assertEqual(result["attachments"], [])
         self.assertIn("Failed to fetch item PARENT1: boom", result["error"])
+
+    def test_get_zot_creates_only_one_client_under_concurrent_first_access(self):
+        barrier = threading.Barrier(8)
+        created_clients = []
+        results = [None] * 8
+        errors = []
+
+        def construct(*_args, **_kwargs):
+            client = object()
+            created_clients.append(client)
+            time.sleep(0.05)
+            return client
+
+        def worker(index):
+            try:
+                barrier.wait(timeout=1)
+                results[index] = db._get_zot()
+            except BaseException as exc:  # pragma: no cover - surfaced by assertions below
+                errors.append(exc)
+
+        with patch("zoty.db.zotero.Zotero", side_effect=construct):
+            threads = [threading.Thread(target=worker, args=(index,)) for index in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=2)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(created_clients), 1)
+        self.assertTrue(all(result is not None for result in results))
+        self.assertEqual({id(result) for result in results}, {id(created_clients[0])})
 
     def test_list_collections_returns_structured_error_skeleton_for_fetch_failure(self):
         with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
