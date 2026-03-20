@@ -39,6 +39,7 @@ _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_VIEW_MAX_CREATORS = 5
+_EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 
 @dataclass
 class _ParentRecord:
@@ -1575,6 +1576,7 @@ def _search_response(
     requested_limit: int,
     applied_limit: int,
     error: str | None = None,
+    warning: str | None = None,
 ) -> str:
     response: dict[str, Any] = {
         "results": results,
@@ -1587,6 +1589,8 @@ def _search_response(
     }
     if error is not None:
         response["error"] = error
+    if warning is not None:
+        response["warning"] = warning
     return json.dumps(response)
 
 
@@ -1670,6 +1674,7 @@ def search(
             [],
             requested_limit=requested_limit,
             applied_limit=applied_limit,
+            warning=_EMPTY_QUERY_WARNING,
         )
 
     max_docs = len(state.corpus_docs)
@@ -1796,6 +1801,7 @@ def search_within_item(
             "query": query,
             "item_key": normalized_item_key,
             "total": 0,
+            "warning": _EMPTY_QUERY_WARNING,
         })
 
     attachments_by_key = {

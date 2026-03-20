@@ -1114,6 +1114,51 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
         self.assertEqual(result["results"][0]["key"], "PARENT1")
 
+    def test_search_returns_warning_when_query_has_no_searchable_terms(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("the and or", limit=3))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
+    def test_search_does_not_return_warning_for_valid_zero_match_query(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 0.0),
+        ])
+
+        result = json.loads(db.search("quantum topology", limit=3))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("warning", result)
+
     def test_search_within_item_returns_multiple_ranked_matches_for_one_parent(self):
         parents = {
             "PARENT1": {
@@ -1231,6 +1276,31 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
         self.assertEqual(result["results"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
+    def test_search_within_item_does_not_return_warning_for_valid_zero_match_query(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 0.0),
+        ])
+
+        result = json.loads(db.search_within_item("parent1", "quantum topology", limit=3))
+
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("warning", result)
 
     def test_search_within_item_returns_error_for_unknown_item(self):
         self._install_search_state([
