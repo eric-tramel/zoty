@@ -182,6 +182,40 @@ class CollectionAssignmentRetryTests(unittest.TestCase):
         sleep_mock.assert_not_called()
 
 
+class BridgeKeySanitizationTests(unittest.TestCase):
+    @patch("zoty.connector.execute_js", autospec=True)
+    def test_add_to_collection_via_rdp_normalizes_and_escapes_valid_keys(self, execute_mock):
+        execute_mock.return_value = {"ok": True, "result": json.dumps({"status": "added"})}
+
+        result = connector._add_to_collection_via_rdp(" item123 ", "coll456")
+        code = execute_mock.call_args.args[0]
+
+        self.assertEqual(result, {"status": "added"})
+        self.assertIn(f"const itemKey = {json.dumps('ITEM123')};", code)
+        self.assertIn(f"const collectionKey = {json.dumps('COLL456')};", code)
+
+    @patch("zoty.connector.execute_js", autospec=True)
+    def test_attach_pdf_via_rdp_escapes_malicious_parent_key(self, execute_mock):
+        execute_mock.return_value = {
+            "ok": True,
+            "result": json.dumps({"status": "attached", "attachmentID": 7, "key": "ATTACH1"}),
+        }
+
+        parent_key = 'parent123";\nalert(1);//'
+        pdf_path = "/tmp/evil's.pdf"
+
+        result = connector._attach_pdf_via_rdp(parent_key, pdf_path)
+        code = execute_mock.call_args.args[0]
+
+        self.assertEqual(result, {"status": "attached", "attachmentID": 7, "key": "ATTACH1"})
+        self.assertIn(f"const parentKey = {json.dumps(parent_key.strip().upper())};", code)
+        self.assertIn(f"file: {json.dumps(pdf_path)}", code)
+
+    def test_add_to_collection_via_rdp_rejects_blank_keys(self):
+        with self.assertRaises(ValueError):
+            connector._add_to_collection_via_rdp("ITEM123", "   ")
+
+
 class CollectionDuplicateDetectionTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
