@@ -233,6 +233,55 @@ class AttachmentPathsTests(DbTestCase):
 
 
 class CollectionItemTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    dateAdded TEXT NOT NULL
+                );
+                CREATE TABLE itemAttachments (
+                    itemID INTEGER PRIMARY KEY,
+                    parentItemID INT,
+                    linkMode INT,
+                    contentType TEXT,
+                    path TEXT
+                );
+                CREATE TABLE fields (
+                    fieldID INTEGER PRIMARY KEY,
+                    fieldName TEXT NOT NULL
+                );
+                CREATE TABLE itemDataValues (
+                    valueID INTEGER PRIMARY KEY,
+                    value TEXT UNIQUE
+                );
+                CREATE TABLE itemData (
+                    itemID INTEGER NOT NULL,
+                    fieldID INTEGER NOT NULL,
+                    valueID INTEGER NOT NULL
+                );
+                """
+            )
+            conn.executemany(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                [
+                    (1, "ITEM1", "2026-03-10 10:00:00"),
+                    (2, "ATTACH1", "2026-03-10 10:01:00"),
+                ],
+            )
+            conn.execute("INSERT INTO fields(fieldID, fieldName) VALUES (?, ?)", (1, "title"))
+            conn.execute("INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)", (1, "Collection PDF"))
+            conn.execute("INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)", (2, 1, 1))
+            conn.execute(
+                """INSERT INTO itemAttachments(itemID, parentItemID, linkMode, contentType, path)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (2, 1, 0, "application/pdf", "storage:collection.pdf"),
+            )
+            conn.commit()
+
     def test_list_collection_items_returns_structured_error_for_invalid_key(self):
         zot = Mock()
         zot.collections.return_value = [
@@ -307,7 +356,122 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
         self.assertEqual(result["items"][0]["title"], "First Paper")
+        self.assertEqual(
+            result["items"][0]["attachments"],
+            [
+                {
+                    "key": "ATTACH1",
+                    "title": "Collection PDF",
+                    "contentType": "application/pdf",
+                    "linkMode": 0,
+                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "collection.pdf"),
+                }
+            ],
+        )
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
+
+
+class RecentItemsTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    dateAdded TEXT NOT NULL
+                );
+                CREATE TABLE itemAttachments (
+                    itemID INTEGER PRIMARY KEY,
+                    parentItemID INT,
+                    linkMode INT,
+                    contentType TEXT,
+                    path TEXT
+                );
+                CREATE TABLE fields (
+                    fieldID INTEGER PRIMARY KEY,
+                    fieldName TEXT NOT NULL
+                );
+                CREATE TABLE itemDataValues (
+                    valueID INTEGER PRIMARY KEY,
+                    value TEXT UNIQUE
+                );
+                CREATE TABLE itemData (
+                    itemID INTEGER NOT NULL,
+                    fieldID INTEGER NOT NULL,
+                    valueID INTEGER NOT NULL
+                );
+                """
+            )
+            conn.executemany(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                [
+                    (1, "ITEM1", "2026-03-10 10:00:00"),
+                    (2, "ATTACH1", "2026-03-10 10:01:00"),
+                ],
+            )
+            conn.execute("INSERT INTO fields(fieldID, fieldName) VALUES (?, ?)", (1, "title"))
+            conn.execute("INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)", (1, "Recent PDF"))
+            conn.execute("INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)", (2, 1, 1))
+            conn.execute(
+                """INSERT INTO itemAttachments(itemID, parentItemID, linkMode, contentType, path)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (2, 1, 0, "application/pdf", "storage:recent.pdf"),
+            )
+            conn.commit()
+
+    def test_get_recent_items_includes_attachments(self):
+        zot = Mock()
+        zot.items.return_value = [
+            {
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "preprint",
+                    "title": "Recent Paper",
+                    "creators": [{"firstName": "Jane", "lastName": "Example"}],
+                    "date": "2026-03-10",
+                    "DOI": "10.1000/recent",
+                    "url": "https://example.org/recent",
+                    "tags": [{"tag": "ml"}],
+                    "collections": ["COLL123"],
+                    "abstractNote": "Recent abstract.",
+                }
+            },
+            {
+                "data": {
+                    "key": "ATTACH1",
+                    "itemType": "attachment",
+                    "title": "Attachment",
+                    "creators": [],
+                    "date": "",
+                    "DOI": "",
+                    "url": "",
+                    "tags": [],
+                    "collections": [],
+                    "abstractNote": "",
+                }
+            },
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["key"], "ITEM1")
+        self.assertEqual(
+            result["items"][0]["attachments"],
+            [
+                {
+                    "key": "ATTACH1",
+                    "title": "Recent PDF",
+                    "contentType": "application/pdf",
+                    "linkMode": 0,
+                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "recent.pdf"),
+                }
+            ],
+        )
+        zot.items.assert_called_once_with(limit=3, sort="dateAdded", direction="desc")
 
 
 class SearchBehaviorTests(DbTestCase):

@@ -1869,7 +1869,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         }
         if normalized_collection_key not in item_collections:
             continue
-        result.append(_item_to_dict(item, truncate_abstract=500))
+        result.append(_item_to_dict(item, truncate_abstract=500, include_attachments=True))
 
     return json.dumps({
         "collection_key": normalized_collection_key,
@@ -1957,5 +1957,5 @@ def get_recent_items(limit: int = 10) -> str:
     except Exception as exc:
         return json.dumps({"error": f"Failed to fetch recent items: {exc}"})
 
-    result = [_item_to_dict(item, truncate_abstract=500) for item in items]
+    result = [_item_to_dict(item, truncate_abstract=500, include_attachments=True) for item in items]
     return json.dumps({"items": result, "total": len(result)})
