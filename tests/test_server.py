@@ -74,7 +74,7 @@ class ServerToolTests(unittest.TestCase):
         )
         self.assertEqual(
             server.search_within_item.__doc__.splitlines()[0],
-            "Find which passages within one known item match a keyword query.",
+            "Find which passages within one or more known items match a keyword query.",
         )
 
     def test_search_library_delegates_to_db(self):
@@ -94,10 +94,18 @@ class ServerToolTests(unittest.TestCase):
             limit=5,
         )
 
+    def test_search_library_docstring_mentions_snippet_and_abstract_behavior(self):
+        doc = server.search_library.__doc__ or ""
+
+        self.assertIn("abstract text truncated to 500 characters", doc)
+        self.assertIn("snippet_attachment_key", doc)
+        self.assertIn("Invalid collection_key", doc)
+
     def test_search_within_item_delegates_to_db(self):
         with patch.object(server.db, "search_within_item", return_value='{"results": []}') as db_mock:
             result = server.search_within_item(
                 item_key="ITEM123",
+                item_keys=["ITEM456"],
                 query="transformer attention",
                 limit=5,
             )
@@ -105,6 +113,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertEqual(result, '{"results": []}')
         db_mock.assert_called_once_with(
             item_key="ITEM123",
+            item_keys=["ITEM456"],
             query="transformer attention",
             limit=5,
         )

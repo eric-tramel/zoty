@@ -260,50 +260,66 @@ def _resolve_attachment_filepath(attachment_key: str, raw_path: str) -> str:
     return stored_path
 
 
-def _get_item_attachments(item_key: str) -> list[dict]:
-    """Return attachment metadata and resolved filepaths for one parent item."""
-    key = item_key.strip()
-    if not key:
-        return []
+def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Return attachment metadata for each requested parent item key."""
+    normalized_keys: list[str] = []
+    for item_key in item_keys:
+        cleaned = item_key.strip().upper()
+        if cleaned and cleaned not in normalized_keys:
+            normalized_keys.append(cleaned)
+
+    if not normalized_keys:
+        return {}
+
+    attachments_by_parent = {key: [] for key in normalized_keys}
+    placeholders = ",".join("?" for _ in normalized_keys)
 
     try:
-        with closing(sqlite3.connect(f"file:{_ZOTERO_DB}?immutable=1", uri=True)) as db:
-            cur = db.cursor()
-            cur.execute(
-                """SELECT child.key,
-                          COALESCE(MAX(CASE WHEN f.fieldName = 'title' THEN idv.value END), ''),
-                          ia.contentType,
-                          ia.linkMode,
-                          ia.path
-                   FROM items parent
-                   JOIN itemAttachments ia ON parent.itemID = ia.parentItemID
-                   JOIN items child ON ia.itemID = child.itemID
-                   LEFT JOIN itemData id ON child.itemID = id.itemID
-                   LEFT JOIN itemDataValues idv ON id.valueID = idv.valueID
-                   LEFT JOIN fields f ON id.fieldID = f.fieldID
-                   WHERE parent.key = ?
-                   GROUP BY child.key, ia.contentType, ia.linkMode, ia.path, child.dateAdded
-                   ORDER BY child.dateAdded ASC""",
-                (key,),
-            )
-            rows = cur.fetchall()
+        with closing(_open_zotero_db()) as conn:
+            rows = conn.execute(
+                f"""SELECT parent.key AS parent_key,
+                           child.key AS attachment_key,
+                           COALESCE(MAX(CASE WHEN f.fieldName = 'title' THEN idv.value END), '') AS attachment_title,
+                           ia.contentType AS content_type,
+                           ia.linkMode AS link_mode,
+                           ia.path AS raw_path
+                    FROM items parent
+                    JOIN itemAttachments ia ON parent.itemID = ia.parentItemID
+                    JOIN items child ON ia.itemID = child.itemID
+                    LEFT JOIN itemData id ON child.itemID = id.itemID
+                    LEFT JOIN itemDataValues idv ON id.valueID = idv.valueID
+                    LEFT JOIN fields f ON id.fieldID = f.fieldID
+                    WHERE parent.key IN ({placeholders})
+                    GROUP BY parent.key, child.key, ia.contentType, ia.linkMode, ia.path, child.dateAdded
+                    ORDER BY parent.key ASC, child.dateAdded ASC""",
+                normalized_keys,
+            ).fetchall()
     except Exception:
-        return []
+        return attachments_by_parent
 
-    attachments = []
-    for attachment_key, title, content_type, link_mode, raw_path in rows:
-        filepath = _resolve_attachment_filepath(attachment_key, raw_path or "")
+    for row in rows:
+        parent_key = str(row["parent_key"])
+        attachment_key = str(row["attachment_key"])
+        filepath = _resolve_attachment_filepath(attachment_key, row["raw_path"] or "")
         if not filepath:
             continue
-        attachments.append({
+        attachments_by_parent.setdefault(parent_key, []).append({
             "key": attachment_key,
-            "title": title,
-            "contentType": content_type or "",
-            "linkMode": _format_link_mode(link_mode),
+            "title": row["attachment_title"],
+            "contentType": row["content_type"] or "",
+            "linkMode": _format_link_mode(row["link_mode"]),
             "filepath": filepath,
         })
 
-    return attachments
+    return attachments_by_parent
+
+
+def _get_item_attachments(item_key: str) -> list[dict[str, Any]]:
+    """Return attachment metadata and resolved filepaths for one parent item."""
+    key = item_key.strip().upper()
+    if not key:
+        return []
+    return _get_item_attachments_by_parent([key]).get(key, [])
 
 
 def _get_item_attachment_count(item_key: str) -> int:
@@ -1570,7 +1586,7 @@ def _result_from_parent(
     score: float,
     best_doc: dict[str, Any],
     query_terms: list[str],
-    attachment_count: int,
+    attachments: list[dict[str, Any]],
 ) -> dict[str, Any]:
     result = {
         "key": parent["key"],
@@ -1583,7 +1599,8 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachment_count": attachment_count,
+        "attachment_count": len(attachments),
+        "attachments": list(attachments),
         "score": round(score, 4),
     }
 
@@ -1672,6 +1689,8 @@ def search(
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
     requested_limit = max(1, limit)
     applied_limit = min(requested_limit, _SEARCH_RESULT_LIMIT_CAP)
+    normalized_collection_key = collection_key.strip().upper()
+    normalized_item_type = item_type.strip().lower()
 
     with _index_lock:
         state = _search_state
@@ -1691,6 +1710,37 @@ def search(
             [],
             requested_limit=requested_limit,
             applied_limit=applied_limit,
+        )
+
+    filter_warnings: list[str] = []
+    if normalized_collection_key:
+        known_collection_keys = {
+            collection.strip().upper()
+            for parent in state.parents.values()
+            for collection in parent.get("collections", [])
+            if collection.strip()
+        }
+        if normalized_collection_key not in known_collection_keys:
+            filter_warnings.append(
+                f"Collection {normalized_collection_key} was not found in the search index",
+            )
+    if normalized_item_type:
+        known_item_types = {
+            str(parent.get("itemType", "")).lower()
+            for parent in state.parents.values()
+            if str(parent.get("itemType", "")).strip()
+        }
+        if normalized_item_type not in known_item_types:
+            filter_warnings.append(
+                f"Item type {item_type!r} was not found in the search index",
+            )
+    if filter_warnings:
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
+            warning=" ".join(filter_warnings),
         )
 
     query_tokens = bm25s.tokenize(
@@ -1732,9 +1782,9 @@ def search(
             parent = state.parents.get(parent_key)
             if not parent:
                 continue
-            if collection_key and collection_key not in parent["collections"]:
+            if normalized_collection_key and normalized_collection_key not in parent["collections"]:
                 continue
-            if item_type and parent["itemType"].lower() != item_type.lower():
+            if normalized_item_type and parent["itemType"].lower() != normalized_item_type:
                 continue
 
             previous = best_by_parent.get(parent_key)
@@ -1750,14 +1800,14 @@ def search(
 
         batch_size = min(max_docs, batch_size * 2)
 
-    attachment_counts = _get_item_attachment_counts(list(best_by_parent))
+    attachments_by_parent = _get_item_attachments_by_parent(list(best_by_parent))
     results_payload = [
         _result_from_parent(
             state.parents[parent_key],
             score=score,
             best_doc=doc,
             query_terms=query_terms,
-            attachment_count=attachment_counts.get(parent_key, 0),
+            attachments=attachments_by_parent.get(parent_key, []),
         )
         for parent_key, (score, doc) in best_by_parent.items()
     ]
@@ -1781,15 +1831,41 @@ def search_within_item(
     item_key: str,
     query: str,
     limit: int = 5,
+    item_keys: list[str] | None = None,
 ) -> str:
-    """BM25 ranked passage search within one parent item's metadata and attachment chunks."""
+    """BM25 ranked passage search within one or more parent items."""
     limit = max(1, limit)
-    normalized_item_key = item_key.strip().upper()
+    requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
+    unique_requested_keys: list[str] = []
+    for key in requested_keys:
+        if key not in unique_requested_keys:
+            unique_requested_keys.append(key)
+
+    if not unique_requested_keys:
+        return json.dumps({
+            "error": "Provide item_key or item_keys",
+            "results": [],
+            "query": query,
+            "item_key": "",
+            "total": 0,
+        })
+
+    multi_item = len(unique_requested_keys) > 1
+    normalized_item_key = unique_requested_keys[0]
 
     with _index_lock:
         state = _search_state
 
     if state is None:
+        if multi_item:
+            return json.dumps({
+                "error": "Index is still building, please retry in a moment",
+                "items": [],
+                "results": [],
+                "query": query,
+                "item_keys": unique_requested_keys,
+                "total": 0,
+            })
         return json.dumps({
             "error": "Index is still building, please retry in a moment",
             "results": [],
@@ -1798,8 +1874,20 @@ def search_within_item(
             "total": 0,
         })
 
-    parent = state.parents.get(normalized_item_key)
-    if parent is None:
+    found_item_keys = [key for key in unique_requested_keys if key in state.parents]
+    missing_item_keys = [key for key in unique_requested_keys if key not in state.parents]
+
+    if not found_item_keys:
+        if multi_item:
+            return json.dumps({
+                "error": "None of the requested item keys were found in the search index",
+                "items": [],
+                "results": [],
+                "query": query,
+                "item_keys": unique_requested_keys,
+                "missing_item_keys": missing_item_keys,
+                "total": 0,
+            })
         return json.dumps({
             "error": f"Item {normalized_item_key} was not found in the search index",
             "results": [],
@@ -1808,16 +1896,30 @@ def search_within_item(
             "total": 0,
         })
 
-    item_summary = _item_summary_from_parent(parent)
+    if multi_item:
+        items_summary = [_item_summary_from_parent(state.parents[key]) for key in found_item_keys]
+    else:
+        item_summary = _item_summary_from_parent(state.parents[normalized_item_key])
 
     if state.retriever is None or not state.corpus_docs:
-        return json.dumps({
-            "item": item_summary,
+        payload: dict[str, Any] = {
             "results": [],
             "query": query,
-            "item_key": normalized_item_key,
             "total": 0,
-        })
+        }
+        if multi_item:
+            payload["items"] = items_summary
+            payload["item_keys"] = found_item_keys
+            if missing_item_keys:
+                payload["warning"] = (
+                    "Some requested item keys were not found in the search index: "
+                    + ", ".join(missing_item_keys)
+                )
+                payload["missing_item_keys"] = missing_item_keys
+        else:
+            payload["item"] = item_summary
+            payload["item_key"] = normalized_item_key
+        return json.dumps(payload)
 
     query_tokens = bm25s.tokenize(
         [query],
@@ -1827,24 +1929,40 @@ def search_within_item(
     )
     query_terms = _extract_query_terms(query)
     if not query_terms or not query_tokens or not query_tokens[0]:
-        return json.dumps({
-            "item": item_summary,
+        warnings = [_EMPTY_QUERY_WARNING]
+        if missing_item_keys:
+            warnings.append(
+                "Some requested item keys were not found in the search index: "
+                + ", ".join(missing_item_keys),
+            )
+
+        payload = {
             "results": [],
             "query": query,
-            "item_key": normalized_item_key,
             "total": 0,
-            "warning": _EMPTY_QUERY_WARNING,
-        })
+            "warning": " ".join(warnings),
+        }
+        if multi_item:
+            payload["items"] = items_summary
+            payload["item_keys"] = found_item_keys
+            if missing_item_keys:
+                payload["missing_item_keys"] = missing_item_keys
+        else:
+            payload["item"] = item_summary
+            payload["item_key"] = normalized_item_key
+        return json.dumps(payload)
 
-    attachments_by_key = {
-        attachment["key"]: attachment
-        for attachment in _get_item_attachments(parent["key"])
+    attachments_by_parent = _get_item_attachments_by_parent(found_item_keys)
+    attachments_lookup_by_parent = {
+        parent_key: {attachment["key"]: attachment for attachment in attachments}
+        for parent_key, attachments in attachments_by_parent.items()
     }
 
     max_docs = len(state.corpus_docs)
     batch_size = min(max(limit * 20, 200), max_docs)
     matches: list[dict[str, Any]] = []
     seen_doc_ids: set[str] = set()
+    found_item_key_set = set(found_item_keys)
 
     while batch_size > 0:
         results, scores = state.retriever.retrieve(
@@ -1860,18 +1978,19 @@ def search_within_item(
             score = float(scores[0, index])
             if score <= 0:
                 continue
-            if doc["parent_key"] != normalized_item_key:
+            parent_key = doc["parent_key"]
+            if parent_key not in found_item_key_set:
                 continue
             if doc["doc_id"] in seen_doc_ids:
                 continue
 
             seen_doc_ids.add(doc["doc_id"])
             matches.append(_result_from_doc(
-                parent,
+                state.parents[parent_key],
                 score=score,
                 doc=doc,
                 query_terms=query_terms,
-                attachments_by_key=attachments_by_key,
+                attachments_by_key=attachments_lookup_by_parent.get(parent_key, {}),
             ))
 
             if len(matches) >= limit:
@@ -1883,13 +2002,25 @@ def search_within_item(
 
         batch_size = min(max_docs, batch_size * 2)
 
-    return json.dumps({
-        "item": item_summary,
+    payload = {
         "results": matches[:limit],
         "query": query,
-        "item_key": normalized_item_key,
         "total": len(matches[:limit]),
-    })
+    }
+    if multi_item:
+        payload["items"] = items_summary
+        payload["item_keys"] = found_item_keys
+        if missing_item_keys:
+            payload["warning"] = (
+                "Some requested item keys were not found in the search index: "
+                + ", ".join(missing_item_keys)
+            )
+            payload["missing_item_keys"] = missing_item_keys
+    else:
+        payload["item"] = item_summary
+        payload["item_key"] = normalized_item_key
+
+    return json.dumps(payload)
 
 
 def list_collections() -> str:
