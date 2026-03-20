@@ -34,8 +34,12 @@ def search_library(
 
     Returns:
         JSON with ranked search results including title, creators, date, score,
-        metadata abstract, optional plain-text snippets, attachment counts,
-        and limit metadata describing any applied cap.
+        abstract text truncated to 500 characters, attachment_count, and
+        lightweight attachment details. Snippets are included when query terms
+        match either the best-ranked attachment chunk (with
+        snippet_attachment_key) or the abstract metadata. Invalid collection_key
+        and item_type filters return a warning instead of silently failing.
+        Response metadata includes requested/applied limits and cap details.
     """
     return db.search(
         query,
@@ -46,23 +50,37 @@ def search_library(
 
 
 @mcp_server.tool()
-def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
-    """Find which passages within one known item match a keyword query.
+def search_within_item(
+    item_key: str,
+    query: str,
+    limit: int = 5,
+    item_keys: list[str] | None = None,
+) -> str:
+    """Find which passages within one or more known items match a keyword query.
 
-    Use after `search_library` to drill into a specific paper.
+    Use after `search_library` to drill into one paper, or compare passage-level
+    relevance across several papers in a single call.
 
     Args:
         item_key: Zotero parent item key to search within. Use the `key`
             field from `search_library`, `list_collection_items`, or
             `get_recent_items` results (for example, `X9KJ2M4P`).
+        item_keys: Optional additional Zotero parent item keys to search
+            within together with item_key for cross-item ranking.
         query: Search keywords to match against that item's metadata and attachment chunks
         limit: Maximum number of passage matches to return (default: 5)
 
     Returns:
-        JSON with a minimal item summary plus ranked within-item matches,
-        including snippets and attachment context for chunk hits.
+        JSON with ranked passage matches, including snippets and attachment
+        context for chunk hits. Single-item calls return `item`; multi-item
+        calls return `items` and `item_keys`.
     """
-    return db.search_within_item(item_key=item_key, query=query, limit=limit)
+    return db.search_within_item(
+        item_key=item_key,
+        item_keys=item_keys,
+        query=query,
+        limit=limit,
+    )
 
 
 @mcp_server.tool()

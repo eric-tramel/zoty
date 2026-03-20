@@ -291,10 +291,21 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["results"][0]["key"], "PARENT1")
         self.assertEqual(result["results"][0]["attachment_count"], 1)
-        self.assertNotIn("attachments", result["results"][0])
+        self.assertEqual(
+            result["results"][0]["attachments"],
+            [
+                {
+                    "key": "ATTACH1",
+                    "title": "Attached PDF",
+                    "contentType": "application/pdf",
+                    "linkMode": "imported_file",
+                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
+                }
+            ],
+        )
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
 
-    def test_search_batches_attachment_count_lookups_for_multiple_results(self):
+    def test_search_batches_attachment_detail_lookups_for_multiple_results(self):
         with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
             conn.execute(
                 "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
@@ -381,6 +392,14 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["total"], 2)
         self.assertEqual([row["key"] for row in result["results"]], ["PARENT1", "PARENT2"])
         self.assertEqual([row["attachment_count"] for row in result["results"]], [1, 1])
+        self.assertEqual(
+            result["results"][0]["attachments"][0]["filepath"],
+            str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
+        )
+        self.assertEqual(
+            result["results"][1]["attachments"][0]["filepath"],
+            str(db._ZOTERO_STORAGE / "ATTACH2" / "book.epub"),
+        )
         self.assertEqual(open_db_mock.call_count, 1)
 
 
@@ -1186,6 +1205,56 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["results"][0]["key"], "PARENT1")
 
+    def test_search_warns_for_unknown_collection_key_filter(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 30,
+                "token_count": 4,
+                "text": "query match metadata",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("query", collection_key="missing"))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(
+            result["warning"],
+            "Collection MISSING was not found in the search index",
+        )
+
+    def test_search_warns_for_unknown_item_type_filter(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 30,
+                "token_count": 4,
+                "text": "query match metadata",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("query", item_type="invalidType"))
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(
+            result["warning"],
+            "Item type 'invalidType' was not found in the search index",
+        )
+
     def test_search_caps_large_requested_limits_and_reports_metadata(self):
         parents = {}
         docs = []
@@ -1443,6 +1512,83 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["item_key"], "MISSING")
         self.assertEqual(result["results"], [])
         self.assertIn("was not found", result["error"])
+
+    def test_search_within_item_supports_multi_item_queries(self):
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "First Paper",
+                "abstract": "First abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-10",
+                "DOI": "",
+                "url": "",
+            },
+            "PARENT2": {
+                "key": "PARENT2",
+                "dateModified": "2026-03-11 10:00:00",
+                "itemType": "preprint",
+                "title": "Second Paper",
+                "abstract": "Second abstract.",
+                "creators": ["John Example"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-11",
+                "DOI": "",
+                "url": "",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT2",
+                "parent_key": "PARENT2",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match second",
+                "text_hash": "hash-2",
+            }, 8.0),
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        result = json.loads(
+            db.search_within_item(
+                item_key="parent1",
+                item_keys=["parent2"],
+                query="query",
+                limit=2,
+            )
+        )
+
+        self.assertEqual(result["item_keys"], ["PARENT1", "PARENT2"])
+        self.assertEqual(
+            result["items"],
+            [
+                {"key": "PARENT1", "title": "First Paper"},
+                {"key": "PARENT2", "title": "Second Paper"},
+            ],
+        )
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([row["item_key"] for row in result["results"]], ["PARENT2", "PARENT1"])
 
 
 class SnapshotLifecycleTests(DbTestCase):
