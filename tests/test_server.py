@@ -126,6 +126,18 @@ class ServerToolTests(unittest.TestCase):
             locale="en-GB",
         )
 
+    def test_get_bibtex_tool_description_mentions_required_key_inputs(self):
+        async def get_tool_description():
+            tools = await server.mcp_server.list_tools()
+            for tool in tools:
+                if tool.name == "get_bibtex_and_citation_for_items":
+                    return tool.description
+            self.fail("get_bibtex_and_citation_for_items tool was not registered")
+
+        description = asyncio.run(get_tool_description())
+
+        self.assertIn("Provide at least one of `item_key` or `item_keys`.", description)
+
     def test_add_paper_tool_description_mentions_required_inputs_and_precedence(self):
         async def get_tool_description():
             tools = await server.mcp_server.list_tools()
