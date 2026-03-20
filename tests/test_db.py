@@ -310,6 +310,116 @@ class CollectionItemTests(DbTestCase):
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
 
 
+class ParentRecordDateNormalizationTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    version INTEGER,
+                    dateModified TEXT,
+                    itemTypeID INTEGER NOT NULL,
+                    libraryID INTEGER
+                );
+                CREATE TABLE itemTypesCombined (
+                    itemTypeID INTEGER PRIMARY KEY,
+                    typeName TEXT NOT NULL
+                );
+                CREATE TABLE deletedItems (
+                    itemID INTEGER PRIMARY KEY
+                );
+                CREATE TABLE fields (
+                    fieldID INTEGER PRIMARY KEY,
+                    fieldName TEXT NOT NULL
+                );
+                CREATE TABLE itemDataValues (
+                    valueID INTEGER PRIMARY KEY,
+                    value TEXT UNIQUE
+                );
+                CREATE TABLE itemData (
+                    itemID INTEGER NOT NULL,
+                    fieldID INTEGER NOT NULL,
+                    valueID INTEGER NOT NULL
+                );
+                CREATE TABLE itemCreators (
+                    itemID INTEGER NOT NULL,
+                    creatorID INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL
+                );
+                CREATE TABLE creators (
+                    creatorID INTEGER PRIMARY KEY,
+                    firstName TEXT,
+                    lastName TEXT,
+                    fieldMode INTEGER
+                );
+                CREATE TABLE collectionItems (
+                    collectionID INTEGER NOT NULL,
+                    itemID INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL
+                );
+                CREATE TABLE collections (
+                    collectionID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL
+                );
+                CREATE TABLE itemTags (
+                    itemID INTEGER NOT NULL,
+                    tagID INTEGER NOT NULL
+                );
+                CREATE TABLE tags (
+                    tagID INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """INSERT INTO itemTypesCombined(itemTypeID, typeName)
+                   VALUES (?, ?)""",
+                (1, "preprint"),
+            )
+            conn.execute(
+                """INSERT INTO items(itemID, key, version, dateModified, itemTypeID, libraryID)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (1, "PARENT1", 3, "2026-03-10 10:00:00", 1, 1),
+            )
+            conn.executemany(
+                "INSERT INTO fields(fieldID, fieldName) VALUES (?, ?)",
+                [
+                    (1, "title"),
+                    (2, "date"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)",
+                [
+                    (1, "Normalized Date Paper"),
+                    (2, "2025-09-17 2025-09-17"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                [
+                    (1, 1, 1),
+                    (1, 2, 2),
+                ],
+            )
+            conn.commit()
+
+    def test_normalize_item_date_collapses_duplicate_iso_dates_only(self):
+        self.assertEqual(db._normalize_item_date("2025-09-17 2025-09-17"), "2025-09-17")
+        self.assertEqual(db._normalize_item_date(" 2025-09-17   2025-09-17 "), "2025-09-17")
+        self.assertEqual(db._normalize_item_date("2025-09-17 2025-10-01"), "2025-09-17 2025-10-01")
+        self.assertEqual(db._normalize_item_date("Spring 2025 Spring 2025"), "Spring 2025 Spring 2025")
+
+    def test_fetch_parent_records_normalizes_duplicated_date_field(self):
+        parents = db._fetch_parent_records()
+
+        self.assertEqual(parents["PARENT1"].date, "2025-09-17")
+        self.assertEqual(parents["PARENT1"].title, "Normalized Date Paper")
+
+
 class SearchBehaviorTests(DbTestCase):
     def setUp(self):
         super().setUp()
