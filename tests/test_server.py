@@ -5,6 +5,17 @@ from unittest.mock import patch
 import zoty.server as server
 
 
+def _get_registered_tool(name: str):
+    async def get_tool():
+        tools = await server.mcp_server.list_tools()
+        for tool in tools:
+            if tool.name == name:
+                return tool
+        raise AssertionError(f"{name} tool was not registered")
+
+    return asyncio.run(get_tool())
+
+
 class ServerMainTests(unittest.TestCase):
     def setUp(self):
         self.original_host = server.mcp_server.settings.host
@@ -80,11 +91,13 @@ class ServerToolTests(unittest.TestCase):
     def test_list_and_recent_tool_docstrings_describe_fields_and_caps(self):
         list_doc = " ".join(server.list_collection_items.__doc__.split())
         recent_doc = " ".join(server.get_recent_items.__doc__.split())
-        self.assertIn("Requested items to return before the cap is applied", list_doc)
-        self.assertIn("JSON with `collection_key`, `collection_found`, `items`, and limit metadata.", list_doc)
+        self.assertIn("default: 50, capped at 25", list_doc)
+        self.assertIn("`limit=0` returns an empty result set", list_doc)
+        self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", list_doc)
         self.assertIn("truncated `abstract` (500 chars)", list_doc)
-        self.assertIn("Requested items to return before the cap is applied", recent_doc)
-        self.assertIn("JSON with `items`, `total`, and limit metadata.", recent_doc)
+        self.assertIn("default: 10, capped at 25", recent_doc)
+        self.assertIn("`limit=0` returns an empty result set", recent_doc)
+        self.assertIn("metadata (`requested_limit`, `applied_limit`, `limit_cap`, `limit_capped`)", recent_doc)
         self.assertIn("`date_added`", recent_doc)
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
 
@@ -109,10 +122,16 @@ class ServerToolTests(unittest.TestCase):
 
     def test_search_library_docstring_mentions_snippet_and_abstract_behavior(self):
         doc = server.search_library.__doc__ or ""
+        normalized_doc = " ".join(doc.split())
 
         self.assertIn("abstract text truncated to 500 characters", doc)
         self.assertIn("include_attachments", doc)
         self.assertIn("invalid `collection_key` / `item_type` filters", doc)
+        self.assertIn(
+            "values not present in the current search index return no items plus a warning",
+            normalized_doc,
+        )
+        self.assertIn("default: 10, capped at 25", normalized_doc)
 
     def test_search_within_item_delegates_to_db(self):
         with patch.object(server.db, "search_within_item", return_value='{"matches": []}') as db_mock:
@@ -132,14 +151,7 @@ class ServerToolTests(unittest.TestCase):
         )
 
     def test_search_within_item_tool_description_mentions_attachment_chunk_fields(self):
-        async def get_tool_description():
-            tools = await server.mcp_server.list_tools()
-            for tool in tools:
-                if tool.name == "search_within_item":
-                    return tool.description
-            self.fail("search_within_item tool was not registered")
-
-        description = asyncio.run(get_tool_description())
+        description = _get_registered_tool("search_within_item").description
 
         self.assertIn("attachment_key", description)
         self.assertIn("attachment_title", description)
@@ -194,26 +206,72 @@ class ServerToolTests(unittest.TestCase):
         )
 
     def test_get_bibtex_tool_description_mentions_required_key_inputs(self):
-        async def get_tool_description():
-            tools = await server.mcp_server.list_tools()
-            for tool in tools:
-                if tool.name == "get_bibtex_and_citation_for_items":
-                    return tool.description
-            self.fail("get_bibtex_and_citation_for_items tool was not registered")
-
-        description = asyncio.run(get_tool_description())
+        description = _get_registered_tool("get_bibtex_and_citation_for_items").description
 
         self.assertIn("Provide at least one of `item_key` or `item_keys`.", description)
 
-    def test_get_item_tool_description_mentions_batch_inputs_and_response_shape(self):
-        async def get_tool_description():
-            tools = await server.mcp_server.list_tools()
-            for tool in tools:
-                if tool.name == "get_item":
-                    return tool.description
-            self.fail("get_item tool was not registered")
+    def test_get_bibtex_tool_schema_requires_item_key_or_item_keys(self):
+        schema = _get_registered_tool("get_bibtex_and_citation_for_items").inputSchema
 
-        description = asyncio.run(get_tool_description())
+        self.assertEqual(
+            schema.get("anyOf"),
+            [
+                {
+                    "required": ["item_key"],
+                    "properties": {
+                        "item_key": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                    },
+                },
+                {
+                    "required": ["item_keys"],
+                    "properties": {
+                        "item_keys": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
+                            "minItems": 1,
+                        },
+                    },
+                },
+            ],
+        )
+        self.assertEqual(
+            schema["properties"]["item_key"]["description"],
+            "A single Zotero item key. Provide this, `item_keys`, or both.",
+        )
+        self.assertEqual(
+            schema["properties"]["item_keys"]["description"],
+            "A list of Zotero item keys for batch export. Provide this, `item_key`, or both.",
+        )
+
+    def test_search_library_tool_description_mentions_item_type_values_and_warning_behavior(self):
+        description = _get_registered_tool("search_library").description
+
+        self.assertIn("Canonical `item_type` values:", description)
+        self.assertIn("artwork", description)
+        self.assertIn("journalArticle", description)
+        self.assertIn("webpage", description)
+        self.assertIn("returns no items and a warning", description)
+
+    def test_limit_parameter_schemas_describe_clamping_and_metadata(self):
+        search_schema = _get_registered_tool("search_library").inputSchema
+        list_schema = _get_registered_tool("list_collection_items").inputSchema
+        recent_schema = _get_registered_tool("get_recent_items").inputSchema
+
+        self.assertIn("Values below 0 are treated as 0, values above 25 are clamped to 25", search_schema["properties"]["limit"]["description"])
+        self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", search_schema["properties"]["limit"]["description"])
+        self.assertIn("Values below 0 are treated as 0, values above 25 are clamped to 25", list_schema["properties"]["limit"]["description"])
+        self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", list_schema["properties"]["limit"]["description"])
+        self.assertIn("Values below 0 are treated as 0, values above 25 are clamped to 25", recent_schema["properties"]["limit"]["description"])
+        self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", recent_schema["properties"]["limit"]["description"])
+
+    def test_get_item_tool_description_mentions_batch_inputs_and_response_shape(self):
+        description = _get_registered_tool("get_item").description
         normalized_description = " ".join(description.split())
 
         self.assertIn("`item_key` and `item_keys` can be combined", normalized_description)
@@ -221,14 +279,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("`item_keys`, `items`, `requested`, `total`", normalized_description)
 
     def test_add_paper_tool_description_mentions_required_inputs_and_precedence(self):
-        async def get_tool_description():
-            tools = await server.mcp_server.list_tools()
-            for tool in tools:
-                if tool.name == "add_paper":
-                    return tool.description
-            self.fail("add_paper tool was not registered")
-
-        description = asyncio.run(get_tool_description())
+        description = _get_registered_tool("add_paper").description
 
         self.assertIn("Provide at least one of `arxiv_id` or `doi`.", description)
         self.assertIn("If both are provided,", description)
