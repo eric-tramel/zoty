@@ -131,7 +131,8 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
 | `get_item` | Full metadata for a single item by key, including the full untruncated abstract and attachment filepaths; search results already include most fields, so use this only when the full abstract is needed |
-| `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for one item key or a list of item keys, typically from `search_library` |
+| `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for a single `item_key` or batch `item_keys`; both can be combined and at least one must be provided |
+>>>>>>> origin/main
 | `get_recent_items` | Recently added items, sorted by date |
 | `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
 
