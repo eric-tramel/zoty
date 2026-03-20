@@ -2088,14 +2088,6 @@ def search(
             warning=" ".join(filter_warnings),
         )
 
-    if applied_limit == 0:
-        return _search_response(
-            query,
-            [],
-            requested_limit=requested_limit,
-            applied_limit=applied_limit,
-        )
-
     query_tokens = bm25s.tokenize(
         [query],
         stopwords="en",
@@ -2110,6 +2102,14 @@ def search(
             requested_limit=requested_limit,
             applied_limit=applied_limit,
             warning=_EMPTY_QUERY_WARNING,
+        )
+
+    if applied_limit == 0:
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
         )
 
     max_docs = len(state.corpus_docs)
@@ -2315,7 +2315,6 @@ def search_within_item(
             matches=[],
             item=item_summary,
         )
-
     query_tokens = bm25s.tokenize(
         [query],
         stopwords="en",
@@ -2349,6 +2348,29 @@ def search_within_item(
             applied_limit=applied_limit,
             item=item_summary,
             warning=_EMPTY_QUERY_WARNING,
+        )
+
+    if limit == 0:
+        if multi_item:
+            warning = None
+            if missing_item_keys:
+                warning = (
+                    "Some requested item keys were not found in the search index: "
+                    + ", ".join(missing_item_keys)
+                )
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=found_item_keys,
+                items=items_summary,
+                missing_item_keys=missing_item_keys,
+                warning=warning,
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            item=item_summary,
         )
 
     attachments_by_parent = _get_item_attachments_by_parent(found_item_keys)

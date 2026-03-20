@@ -1570,6 +1570,31 @@ class SearchBehaviorTests(DbTestCase):
         self.assertFalse(result["limit_capped"])
         self.assertEqual(db._search_state.retriever.calls, [])
 
+    def test_search_preserves_zero_requested_limit_while_returning_empty_query_warning(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("the and or", limit=0))
+
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 0)
+        self.assertEqual(result["applied_limit"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
     def test_search_returns_warning_when_query_has_no_searchable_terms(self):
         self._install_search_state([
             ({
@@ -1738,6 +1763,30 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(db._search_state.retriever.calls, [])
+
+    def test_search_within_item_zero_limit_still_returns_empty_query_warning(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search_within_item("parent1", "the and", limit=0))
+
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["matches"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
         self.assertEqual(db._search_state.retriever.calls, [])
 
     def test_search_within_item_returns_lean_item_summary_when_query_has_no_terms(self):
