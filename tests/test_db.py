@@ -297,6 +297,20 @@ class CollectionItemTests(DbTestCase):
                     "abstractNote": "",
                 }
             },
+            {
+                "data": {
+                    "key": "ANNOT1",
+                    "itemType": "annotation",
+                    "title": "Annotation",
+                    "creators": [],
+                    "date": "",
+                    "DOI": "",
+                    "url": "",
+                    "tags": [],
+                    "collections": ["COLL123"],
+                    "abstractNote": "",
+                }
+            },
         ]
 
         with patch("zoty.db._get_zot", return_value=zot):
