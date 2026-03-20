@@ -10,7 +10,7 @@ from collections import deque
 from contextlib import closing
 import json
 import os
-import random
+import secrets
 import sqlite3
 import string
 import sys
@@ -281,7 +281,7 @@ def _add_paper_error_payload(error: str, *, collection_key: str = "") -> dict[st
 
 def _zotero_key(length: int = 8) -> str:
     chars = string.ascii_uppercase + string.digits
-    return "".join(random.choices(chars, k=length))
+    return "".join(secrets.choice(chars) for _ in range(length))
 
 
 def _read_response_text(req: urllib.request.Request, *, timeout: int) -> str:

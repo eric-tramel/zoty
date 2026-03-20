@@ -266,6 +266,21 @@ class DownloadPdfSecurityTests(unittest.TestCase):
                 close_mock.assert_called_once_with(17)
 
 
+class ZoteroKeySecurityTests(unittest.TestCase):
+    @patch("zoty.connector.secrets.choice", side_effect=list("ABCD1234"))
+    def test_zotero_key_uses_secrets_choice_per_character(self, choice_mock):
+        key = connector._zotero_key()
+
+        self.assertEqual(key, "ABCD1234")
+        self.assertEqual(choice_mock.call_count, 8)
+        self.assertTrue(
+            all(
+                call.args[0] == connector.string.ascii_uppercase + connector.string.digits
+                for call in choice_mock.call_args_list
+            )
+        )
+
+
 class CollectionAssignmentRetryTests(unittest.TestCase):
     @patch("zoty.connector.time.sleep", autospec=True)
     def test_retries_bridge_http_400(self, sleep_mock):
