@@ -194,6 +194,20 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
 
+    def test_get_item_rejects_empty_item_key(self):
+        with patch("zoty.db._get_zot") as get_zot_mock:
+            result = json.loads(db.get_item(""))
+
+        self.assertEqual(result, {"error": "Provide item_key"})
+        get_zot_mock.assert_not_called()
+
+    def test_get_item_rejects_whitespace_only_item_key(self):
+        with patch("zoty.db._get_zot") as get_zot_mock:
+            result = json.loads(db.get_item("   "))
+
+        self.assertEqual(result, {"error": "Provide item_key"})
+        get_zot_mock.assert_not_called()
+
     def test_search_includes_attachment_count(self):
         attachment_doc = {
             "doc_id": "chunk:ATTACH1:0",
