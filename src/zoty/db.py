@@ -1352,12 +1352,13 @@ def _install_state(state: _SearchState) -> None:
 
 def _prune_snapshots(*keep_snapshot_ids: str) -> None:
     keep = {snapshot_id for snapshot_id in keep_snapshot_ids if snapshot_id}
-    for path in _snapshots_dir().iterdir():
-        if not path.is_dir():
-            continue
-        if path.name in keep or path.name.startswith("."):
-            continue
-        shutil.rmtree(path, ignore_errors=True)
+    with _index_lock:
+        for path in _snapshots_dir().iterdir():
+            if not path.is_dir():
+                continue
+            if path.name in keep or path.name.startswith("."):
+                continue
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _start_refresh_thread(*, force: bool = False) -> None:
@@ -1390,7 +1391,8 @@ def prepare_search_index(*, force_refresh: bool = False) -> None:
 
     loaded_snapshot = has_state
     if active_snapshot_id and not has_state:
-        state = _load_snapshot(active_snapshot_id)
+        with _index_lock:
+            state = _search_state if _search_state is not None else _load_snapshot(active_snapshot_id)
         if state is not None:
             _install_state(state)
             loaded_snapshot = True
