@@ -6,6 +6,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import urllib.parse
 
 from zoty import connector
 
@@ -142,6 +143,35 @@ class ArxivRateLimiterTests(unittest.TestCase):
         self.assertEqual(result["archiveID"], "arXiv:1234.5678")
         self.assertEqual(result["creators"][0]["lastName"], "Example")
         run_mock.assert_called_once()
+
+    def test_fetch_arxiv_metadata_urlencodes_id_list_query(self):
+        feed = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Example Title</title>
+    <summary>Example abstract.</summary>
+    <published>2024-01-02T00:00:00Z</published>
+    <author><name>Jane Example</name></author>
+  </entry>
+</feed>"""
+        captured = {}
+
+        def fake_run(func, req, **kwargs):
+            captured["url"] = req.full_url
+            return feed
+
+        with patch.object(connector._ARXIV_METADATA_LIMITER, "run", side_effect=fake_run):
+            connector._fetch_arxiv_metadata("1234.5678&max_results=1000")
+
+        parsed = urllib.parse.urlparse(captured["url"])
+        self.assertEqual(parsed.scheme, "http")
+        self.assertEqual(parsed.netloc, "export.arxiv.org")
+        self.assertEqual(parsed.path, "/api/query")
+        self.assertEqual(
+            urllib.parse.parse_qs(parsed.query),
+            {"id_list": ["1234.5678&max_results=1000"]},
+        )
+        self.assertNotIn("&max_results=1000", parsed.query)
 
     def test_fetch_arxiv_metadata_rejects_error_entries(self):
         feed = """<?xml version="1.0" encoding="UTF-8"?>

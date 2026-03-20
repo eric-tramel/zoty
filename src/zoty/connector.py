@@ -487,7 +487,7 @@ def _download_pdf(pdf_url: str, filename: str) -> tuple[str, Path, int] | None:
 def _fetch_arxiv_metadata(arxiv_id: str) -> dict:
     base_id = _normalize_arxiv_id(arxiv_id)
 
-    url = f"{ARXIV_API_URL}?id_list={base_id}"
+    url = f"{ARXIV_API_URL}?{urllib.parse.urlencode({'id_list': base_id})}"
     req = urllib.request.Request(url)
     body = _ARXIV_METADATA_LIMITER.run(_read_response_text, req, timeout=15)
 
