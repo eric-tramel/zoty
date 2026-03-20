@@ -9,6 +9,8 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from pyzotero import errors as zotero_errors
+
 from zoty import db
 
 
@@ -277,28 +279,14 @@ class AttachmentPathsTests(DbTestCase):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item(""))
 
-        self.assertEqual(result["error"], "Provide item_key")
-        self.assertEqual(result["key"], "")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
+        self.assertEqual(result, {"error": "Provide item_key"})
         get_zot_mock.assert_not_called()
 
     def test_get_item_rejects_whitespace_only_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item("   "))
 
-        self.assertEqual(result["error"], "Provide item_key")
-        self.assertEqual(result["key"], "")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
+        self.assertEqual(result, {"error": "Provide item_key"})
         get_zot_mock.assert_not_called()
 
     def test_get_item_supports_single_key_via_item_keys_without_changing_shape(self):
@@ -326,21 +314,57 @@ class AttachmentPathsTests(DbTestCase):
         )
         get_zot_mock.assert_not_called()
 
-    def test_get_item_returns_structured_error_skeleton_for_fetch_failure(self):
+    def test_get_item_returns_clean_error_for_fetch_failure(self):
         zot = Mock()
         zot.item.side_effect = RuntimeError("boom")
 
         with patch("zoty.db._get_zot", return_value=zot):
             result = json.loads(db.get_item("PARENT1"))
 
-        self.assertEqual(result["key"], "PARENT1")
-        self.assertEqual(result["itemType"], "")
-        self.assertEqual(result["creators"], [])
-        self.assertEqual(result["tags"], [])
-        self.assertEqual(result["collections"], [])
-        self.assertEqual(result["attachment_count"], 0)
-        self.assertEqual(result["attachments"], [])
-        self.assertIn("Failed to fetch item PARENT1: boom", result["error"])
+        self.assertEqual(
+            result,
+            {
+                "key": "PARENT1",
+                "error": "Failed to fetch item PARENT1: boom",
+            },
+        )
+
+    def test_get_item_treats_empty_item_payload_as_missing_item(self):
+        with patch("zoty.db._fetch_item_detail", return_value={"data": {}}):
+            result = json.loads(db.get_item("badkey"))
+
+        self.assertEqual(
+            result,
+            {
+                "key": "BADKEY",
+                "error": "Failed to fetch item BADKEY: item not found",
+            },
+        )
+
+    def test_get_item_sanitizes_http_error_details(self):
+        with patch(
+            "zoty.db._fetch_item_detail",
+            side_effect=zotero_errors.HTTPError(
+                "\nCode: 404\n"
+                "URL: http://127.0.0.1:23119/api/users/0/items/BADKEY?format=json\n"
+                "Method: GET\n"
+                "Response: Not found"
+            ),
+        ):
+            response = db.get_item("badkey")
+
+        result = json.loads(response)
+
+        self.assertEqual(
+            result,
+            {
+                "key": "BADKEY",
+                "error": "Failed to fetch item BADKEY: item not found",
+            },
+        )
+        self.assertNotIn("127.0.0.1", response)
+        self.assertNotIn("Code:", response)
+        self.assertNotIn("Method:", response)
 
     def test_get_zot_creates_only_one_client_under_concurrent_first_access(self):
         barrier = threading.Barrier(8)
@@ -2026,6 +2050,10 @@ class CitationEntryTests(DbTestCase):
 
     def test_get_bibtex_and_citation_for_items_returns_single_item_exports(self):
         zot = Mock()
+        author_names = " and ".join(
+            f"Author{index + 1} Example"
+            for index in range(db._BIBTEX_MAX_AUTHORS + 2)
+        )
 
         def item_side_effect(item_key, **kwargs):
             self.assertEqual(kwargs["format"], "json")
@@ -2039,8 +2067,10 @@ class CitationEntryTests(DbTestCase):
                 "bibtex": [
                     (
                         f"@article{{{item_key},\n"
+                        f"  author={{{author_names}}},\n"
                         "  title={Example},\n"
                         "  abstract={Detailed summary with {nested} braces},\n"
+                        "  file={/Users/eric/Zotero/storage/ITEM123/paper.pdf:application/pdf},\n"
                         "  year={2026}\n"
                         "}"
                     )
@@ -2069,7 +2099,16 @@ class CitationEntryTests(DbTestCase):
                     "key": "ITEM123",
                     "citation": "ITEM123 & cite",
                     "bibliography": "ITEM123 reference",
-                    "bibtex": "@article{ITEM123,\n  title={Example},\n  year={2026}\n}",
+                    "bibtex": (
+                        "@article{ITEM123,\n"
+                        "  author={Author1 Example and Author2 Example and Author3 Example and "
+                        "Author4 Example and Author5 Example and Author6 Example and "
+                        "Author7 Example and Author8 Example and Author9 Example and "
+                        "Author10 Example and others},\n"
+                        "  title={Example},\n"
+                        "  year={2026}\n"
+                        "}"
+                    ),
                 }
             ],
         )
@@ -2193,6 +2232,34 @@ class CitationEntryTests(DbTestCase):
                 "total": 0,
             },
         )
+
+    def test_get_bibtex_and_citation_for_items_sanitizes_http_error_details(self):
+        with patch(
+            "zoty.db._fetch_item_exports",
+            side_effect=zotero_errors.HTTPError(
+                "\nCode: 404\n"
+                "URL: http://127.0.0.1:23119/api/users/0/items/BADKEY?format=json&include=bib,citation,bibtex\n"
+                "Method: GET\n"
+                "Response: Not found"
+            ),
+        ):
+            response = db.get_bibtex_and_citation_for_items(item_key="badkey")
+
+        result = json.loads(response)
+
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "BADKEY",
+                    "error": "Failed to fetch citation entry: item not found",
+                }
+            ],
+        )
+        self.assertEqual(result["error"], "Failed to fetch citation entries")
+        self.assertNotIn("127.0.0.1", response)
+        self.assertNotIn("Code:", response)
+        self.assertNotIn("Method:", response)
 
 
 if __name__ == "__main__":

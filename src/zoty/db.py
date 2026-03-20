@@ -19,7 +19,7 @@ from typing import Any
 import urllib.parse
 
 import bm25s
-from pyzotero import zotero
+from pyzotero import errors as zotero_errors, zotero
 
 from zoty.fulltext_bridge import BridgeError, ensure_parent_fulltext
 
@@ -44,12 +44,27 @@ _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
 _ITEM_DETAIL_MAX_WORKERS = 4
 _DETAIL_VIEW_MAX_CREATORS = 15
+_BIBTEX_MAX_AUTHORS = 10
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
     0: "imported_file",
     1: "imported_url",
     2: "linked_file",
     3: "linked_url",
+}
+_HTTP_STATUS_LABELS = {
+    400: "bad request",
+    401: "not authorized",
+    403: "access denied",
+    404: "item not found",
+    409: "conflict",
+    412: "precondition failed",
+    413: "request too large",
+    429: "rate limited by Zotero",
+    500: "server error",
+    502: "bad gateway",
+    503: "service unavailable",
+    504: "gateway timeout",
 }
 
 @dataclass
@@ -495,10 +510,92 @@ def _fetch_item_detail(item_key: str) -> dict[str, Any]:
     return _get_zot().item(item_key)
 
 
+def _validate_item_detail_payload(item_key: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Reject empty/malformed pyzotero payloads as missing items."""
+    if not isinstance(item, dict):
+        raise TypeError(f"Unexpected item payload: {type(item).__name__}")
+
+    data = item.get("data")
+    if not isinstance(data, dict):
+        raise ValueError("item not found")
+
+    returned_key = str(data.get("key", "")).strip().upper()
+    item_type = str(data.get("itemType", "")).strip()
+    if not returned_key or not item_type:
+        raise ValueError("item not found")
+
+    if returned_key != item_key:
+        raise ValueError("item not found")
+
+    return item
+
+
 def _xhtml_to_text(fragment: str) -> str:
     """Collapse Zotero's XHTML bibliography/citation output into plain text."""
     text = re.sub(r"<[^>]+>", " ", fragment)
     return " ".join(html.unescape(text).split())
+
+
+def _strip_urls(text: str) -> str:
+    return re.sub(r"(?i)\b(?:https?|file|zotero)://\S+", "", text)
+
+
+def _extract_http_status_code(message: str) -> int | None:
+    match = re.search(r"(?:^|\n)\s*Code:\s*(\d{3})\b", message)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _sanitize_zotero_error(exc: Exception) -> str:
+    if isinstance(exc, zotero_errors.ResourceNotFoundError):
+        return "item not found"
+    if isinstance(exc, zotero_errors.CouldNotReachURLError):
+        return "could not reach the local Zotero API"
+    if isinstance(exc, zotero_errors.TooManyRequestsError):
+        return "rate limited by Zotero"
+
+    raw_message = str(exc).strip()
+    status_code = _extract_http_status_code(raw_message)
+    if status_code is not None:
+        label = _HTTP_STATUS_LABELS.get(status_code)
+        if label is not None:
+            if status_code == 404:
+                return label
+            return f"{label} (HTTP {status_code})"
+        return f"request failed (HTTP {status_code})"
+
+    response_match = re.search(r"(?:^|\n)\s*Response:\s*(.+)", raw_message, re.DOTALL)
+    if response_match is not None:
+        response_text = _normalize_plain_text(_strip_urls(response_match.group(1)))
+        if response_text:
+            if "not found" in response_text.lower():
+                return "item not found"
+            return response_text
+
+    cleaned_lines = []
+    for line in raw_message.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("Code:", "URL:", "Method:", "Response:")):
+            continue
+        cleaned_lines.append(stripped)
+
+    fallback = _normalize_plain_text(" ".join(cleaned_lines))
+    if not fallback:
+        fallback = _normalize_plain_text(_strip_urls(raw_message))
+    if not fallback:
+        return "request failed"
+    if "not found" in fallback.lower():
+        return "item not found"
+    return fallback
+
+
+def _format_item_error(item_key: str, exc: Exception) -> str:
+    return f"Failed to fetch item {item_key}: {_sanitize_zotero_error(exc)}"
+
+
+def _format_citation_error(exc: Exception) -> str:
+    return f"Failed to fetch citation entry: {_sanitize_zotero_error(exc)}"
 
 
 def _strip_bibtex_field(bibtex: str, field_name: str) -> str:
@@ -565,9 +662,140 @@ def _strip_bibtex_field(bibtex: str, field_name: str) -> str:
     return "".join(output)
 
 
+def _rewrite_bibtex_field(
+    bibtex: str,
+    field_name: str,
+    rewrite: Any,
+) -> str:
+    """Rewrite one top-level BibTeX field across all entries."""
+    if not bibtex:
+        return ""
+
+    field_pattern = re.compile(rf"^[ \t]*{re.escape(field_name)}[ \t]*=", re.IGNORECASE)
+    output: list[str] = []
+    index = 0
+    length = len(bibtex)
+
+    while index < length:
+        if index == 0 or bibtex[index - 1] == "\n":
+            line_end = bibtex.find("\n", index)
+            if line_end == -1:
+                line_end = length
+
+            field_match = field_pattern.match(bibtex[index:line_end])
+            if field_match:
+                value_start = index + field_match.end()
+                while value_start < length and bibtex[value_start] in " \t\r\n":
+                    value_start += 1
+
+                if value_start < length and bibtex[value_start] == "{":
+                    value_body_start = value_start + 1
+                    depth = 1
+                    value_end = value_body_start
+                    while value_end < length and depth > 0:
+                        char = bibtex[value_end]
+                        if char == "{" and bibtex[value_end - 1] != "\\":
+                            depth += 1
+                        elif char == "}" and bibtex[value_end - 1] != "\\":
+                            depth -= 1
+                        value_end += 1
+                    value_body_end = value_end - 1
+                elif value_start < length and bibtex[value_start] == "\"":
+                    value_body_start = value_start + 1
+                    value_end = value_body_start
+                    while value_end < length:
+                        char = bibtex[value_end]
+                        if char == "\"" and bibtex[value_end - 1] != "\\":
+                            break
+                        value_end += 1
+                    value_body_end = value_end
+                    if value_end < length:
+                        value_end += 1
+                else:
+                    value_body_start = value_start
+                    value_end = value_start
+                    while value_end < length and bibtex[value_end] not in ",\n":
+                        value_end += 1
+                    value_body_end = value_end
+
+                field_end = value_end
+                while field_end < length and bibtex[field_end] in " \t":
+                    field_end += 1
+                if field_end < length and bibtex[field_end] == ",":
+                    field_end += 1
+                while field_end < length and bibtex[field_end] in " \t":
+                    field_end += 1
+                if field_end < length and bibtex[field_end] == "\n":
+                    field_end += 1
+
+                replacement = rewrite(bibtex[value_body_start:value_body_end])
+                if replacement is not None:
+                    output.append(bibtex[index:value_body_start])
+                    output.append(replacement)
+                    output.append(bibtex[value_body_end:field_end])
+                index = field_end
+                continue
+
+        output.append(bibtex[index])
+        index += 1
+
+    return "".join(output)
+
+
+def _split_bibtex_names(value: str) -> list[str]:
+    names: list[str] = []
+    current: list[str] = []
+    index = 0
+    depth = 0
+    length = len(value)
+
+    while index < length:
+        char = value[index]
+        if char == "{" and (index == 0 or value[index - 1] != "\\"):
+            depth += 1
+        elif char == "}" and (index == 0 or value[index - 1] != "\\") and depth > 0:
+            depth -= 1
+
+        if depth == 0 and char.isspace():
+            lookahead = index
+            while lookahead < length and value[lookahead].isspace():
+                lookahead += 1
+            if (
+                current
+                and value[lookahead:lookahead + 3].lower() == "and"
+                and lookahead + 3 < length
+                and value[lookahead + 3].isspace()
+            ):
+                names.append("".join(current).strip())
+                current = []
+                index = lookahead + 3
+                while index < length and value[index].isspace():
+                    index += 1
+                continue
+
+        current.append(char)
+        index += 1
+
+    trailing = "".join(current).strip()
+    if trailing:
+        names.append(trailing)
+    return names
+
+
+def _truncate_bibtex_author_list(value: str, *, max_authors: int = _BIBTEX_MAX_AUTHORS) -> str:
+    authors = _split_bibtex_names(value)
+    if max_authors < 0 or len(authors) <= max_authors:
+        return value
+
+    return " and ".join([*authors[:max_authors], "others"])
+
+
 def _compact_bibtex_export(bibtex: str) -> str:
     """Drop fields that duplicate data already provided by other tools."""
-    return _strip_bibtex_field(bibtex, "abstract").strip()
+    compact = _strip_bibtex_field(bibtex, "abstract")
+    compact = _strip_bibtex_field(compact, "file")
+    compact = _rewrite_bibtex_field(compact, "author", _truncate_bibtex_author_list)
+    return compact.strip()
 
 
 def _fetch_item_exports(
@@ -599,11 +827,14 @@ def _fetch_item_exports(
             return value
         return ""
 
-    return {
+    result = {
         "citation": _get_export_block("citation"),
         "bibliography": _get_export_block("bib"),
         "bibtex": _get_export_block("bibtex"),
     }
+    if not any(result.values()):
+        raise ValueError("item not found")
+    return result
 
 
 def _ensure_sidecar_layout() -> None:
@@ -2308,20 +2539,22 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
                 "total": 0,
             })
 
-        payload = _empty_item_payload()
-        payload["error"] = "Provide item_key"
-        return json.dumps(payload)
+        return json.dumps({"error": "Provide item_key"})
 
     attachments_by_parent = _get_item_attachments_by_parent(requested_keys)
 
     if len(requested_keys) == 1:
         normalized_item_key = requested_keys[0]
         try:
-            item = _fetch_item_detail(normalized_item_key)
+            item = _validate_item_detail_payload(
+                normalized_item_key,
+                _fetch_item_detail(normalized_item_key),
+            )
         except Exception as exc:
-            payload = _empty_item_payload(normalized_item_key)
-            payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
-            return json.dumps(payload)
+            return json.dumps({
+                "key": normalized_item_key,
+                "error": _format_item_error(normalized_item_key, exc),
+            })
 
         return json.dumps(
             _item_to_dict(
@@ -2341,11 +2574,11 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
         futures = [executor.submit(_fetch_item_detail, key) for key in requested_keys]
         for key, future in zip(requested_keys, futures):
             try:
-                item = future.result()
+                item = _validate_item_detail_payload(key, future.result())
             except Exception as exc:
                 errors.append({
                     "key": key,
-                    "error": f"Failed to fetch item {key}: {exc}",
+                    "error": _format_item_error(key, exc),
                 })
                 continue
 
@@ -2405,7 +2638,7 @@ def get_bibtex_and_citation_for_items(
         except Exception as exc:
             errors.append({
                 "key": key,
-                "error": f"Failed to fetch citation entry: {exc}",
+                "error": _format_citation_error(exc),
             })
     else:
         max_workers = min(_CITATION_EXPORT_MAX_WORKERS, len(requested_keys))
@@ -2421,7 +2654,7 @@ def get_bibtex_and_citation_for_items(
                 except Exception as exc:
                     errors.append({
                         "key": key,
-                        "error": f"Failed to fetch citation entry: {exc}",
+                        "error": _format_citation_error(exc),
                     })
 
     payload: dict[str, Any] = {
