@@ -286,6 +286,39 @@ def _get_item_attachment_count(item_key: str) -> int:
     return int(row["count"]) if row else 0
 
 
+def _get_item_attachment_counts(item_keys: list[str]) -> dict[str, int]:
+    """Return attachment counts for many parent items in one query."""
+    normalized_keys: list[str] = []
+    for item_key in item_keys:
+        cleaned = item_key.strip()
+        if cleaned and cleaned not in normalized_keys:
+            normalized_keys.append(cleaned)
+
+    if not normalized_keys:
+        return {}
+
+    placeholders = ",".join("?" for _ in normalized_keys)
+    counts = {key: 0 for key in normalized_keys}
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            rows = conn.execute(
+                f"""SELECT parent.key, COUNT(*) AS count
+                    FROM itemAttachments ia
+                    JOIN items parent ON parent.itemID = ia.parentItemID
+                    WHERE parent.key IN ({placeholders})
+                    GROUP BY parent.key""",
+                normalized_keys,
+            ).fetchall()
+    except Exception:
+        return counts
+
+    for row in rows:
+        counts[str(row["key"])] = int(row["count"])
+
+    return counts
+
+
 def _item_to_dict(
     item: dict,
     truncate_abstract: int = 0,
@@ -1473,6 +1506,7 @@ def _result_from_parent(
     score: float,
     best_doc: dict[str, Any],
     query_terms: list[str],
+    attachment_count: int,
 ) -> dict[str, Any]:
     result = {
         "key": parent["key"],
@@ -1485,7 +1519,7 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachment_count": _get_item_attachment_count(parent["key"]),
+        "attachment_count": attachment_count,
         "score": round(score, 4),
     }
 
@@ -1657,12 +1691,14 @@ def search(
 
         batch_size = min(max_docs, batch_size * 2)
 
+    attachment_counts = _get_item_attachment_counts(list(best_by_parent))
     results_payload = [
         _result_from_parent(
             state.parents[parent_key],
             score=score,
             best_doc=doc,
             query_terms=query_terms,
+            attachment_count=attachment_counts.get(parent_key, 0),
         )
         for parent_key, (score, doc) in best_by_parent.items()
     ]
