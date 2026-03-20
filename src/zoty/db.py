@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from contextlib import closing
+import html
 import json
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import threading
@@ -188,6 +190,51 @@ def build_index_background() -> None:
         print(f"zoty: failed to build index: {e}", file=sys.stderr)
 
 
+def _normalize_item_keys(item_key: str = "", item_keys: list[str] | None = None) -> list[str]:
+    """Normalize a single key and/or key list into a clean ordered list."""
+    normalized: list[str] = []
+
+    if item_key.strip():
+        normalized.append(item_key.strip().upper())
+
+    for key in item_keys or []:
+        cleaned = key.strip().upper()
+        if cleaned:
+            normalized.append(cleaned)
+
+    return normalized
+
+
+def _xhtml_to_text(fragment: str) -> str:
+    """Collapse Zotero's XHTML bibliography/citation output into plain text."""
+    text = re.sub(r"<[^>]+>", " ", fragment)
+    return " ".join(html.unescape(text).split())
+
+
+def _fetch_item_export(
+    item_key: str,
+    *,
+    content: str,
+    style: str,
+    locale: str,
+) -> str:
+    """Fetch one formatted export block for a Zotero item."""
+    zot = _get_zot()
+    exported = zot.item(
+        item_key,
+        format="atom",
+        content=content,
+        style=style,
+        locale=locale,
+    )
+
+    if isinstance(exported, list):
+        return exported[0] if exported else ""
+    if isinstance(exported, str):
+        return exported
+    return ""
+
+
 def search(
     query: str,
     collection_key: str = "",
@@ -298,6 +345,72 @@ def get_item(item_key: str) -> str:
         return json.dumps({"error": f"Failed to fetch item {item_key}: {e}"})
 
     return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
+
+
+def get_bibtex_and_citation_for_items(
+    item_key: str = "",
+    item_keys: list[str] | None = None,
+    style: str = "chicago-note-bibliography",
+    locale: str = "en-US",
+) -> str:
+    """Return BibTeX plus formatted citation/bibliography text for one or more items."""
+    requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
+    if not requested_keys:
+        return json.dumps({
+            "error": "Provide item_key or item_keys",
+            "items": [],
+            "total": 0,
+        })
+
+    results: list[dict[str, str]] = []
+    errors: list[dict[str, str]] = []
+
+    for key in requested_keys:
+        try:
+            citation = _fetch_item_export(
+                key,
+                content="citation",
+                style=style,
+                locale=locale,
+            )
+            bibliography = _fetch_item_export(
+                key,
+                content="bib",
+                style=style,
+                locale=locale,
+            )
+            bibtex = _fetch_item_export(
+                key,
+                content="bibtex",
+                style=style,
+                locale=locale,
+            )
+
+            results.append({
+                "key": key,
+                "citation": _xhtml_to_text(citation),
+                "bibliography": _xhtml_to_text(bibliography),
+                "bibtex": bibtex.strip(),
+            })
+        except Exception as e:
+            errors.append({
+                "key": key,
+                "error": f"Failed to fetch citation entry: {e}",
+            })
+
+    payload: dict[str, Any] = {
+        "items": results,
+        "total": len(results),
+        "requested": len(requested_keys),
+        "style": style,
+        "locale": locale,
+    }
+    if errors:
+        payload["errors"] = errors
+        if not results:
+            payload["error"] = "Failed to fetch citation entries"
+
+    return json.dumps(payload)
 
 
 def get_recent_items(limit: int = 10) -> str:

@@ -67,3 +67,22 @@ class ServerMainTests(unittest.TestCase):
         run_mock.assert_called_once_with(transport="sse")
         self.assertEqual(server.mcp_server.settings.sse_path, "/events")
         self.assertEqual(server.mcp_server.settings.message_path, "/messages")
+
+
+class ServerToolTests(unittest.TestCase):
+    def test_get_bibtex_and_citation_for_items_delegates_to_db(self):
+        with patch.object(server.db, "get_bibtex_and_citation_for_items", return_value='{"items": []}') as db_mock:
+            result = server.get_bibtex_and_citation_for_items(
+                item_key="ITEM123",
+                item_keys=["ITEM456"],
+                style="apa",
+                locale="en-GB",
+            )
+
+        self.assertEqual(result, '{"items": []}')
+        db_mock.assert_called_once_with(
+            item_key="ITEM123",
+            item_keys=["ITEM456"],
+            style="apa",
+            locale="en-GB",
+        )

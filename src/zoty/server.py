@@ -75,6 +75,33 @@ def get_item(item_key: str) -> str:
 
 
 @mcp_server.tool()
+def get_bibtex_and_citation_for_items(
+    item_key: str = "",
+    item_keys: list[str] | None = None,
+    style: str = "chicago-note-bibliography",
+    locale: str = "en-US",
+) -> str:
+    """Get BibTeX, citation text, and bibliography text for one or more Zotero items.
+
+    Args:
+        item_key: A single Zotero item key, typically returned by search_library
+        item_keys: Optional list of Zotero item keys, typically returned by search_library
+        style: Citation style to use for formatted citation and bibliography text
+        locale: Citation locale to use for formatted citation and bibliography text
+
+    Returns:
+        JSON with one entry per requested item, including plain-text citation,
+        plain-text bibliography, and a BibTeX export block.
+    """
+    return db.get_bibtex_and_citation_for_items(
+        item_key=item_key,
+        item_keys=item_keys,
+        style=style,
+        locale=locale,
+    )
+
+
+@mcp_server.tool()
 def get_recent_items(limit: int = 10) -> str:
     """Get recently added items from the Zotero library, sorted by date added.
 
