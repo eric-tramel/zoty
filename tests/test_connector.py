@@ -390,5 +390,35 @@ class CollectionDuplicateDetectionTests(unittest.TestCase):
         push_mock.assert_not_called()
 
 
+class AddPaperRefreshSchedulingTests(unittest.TestCase):
+    def test_add_paper_schedules_background_fulltext_refresh_after_pdf_attach(self):
+        item = {
+            "title": "Example Title",
+            "creators": [{"firstName": "Jane", "lastName": "Example"}],
+            "date": "2026-03-10",
+            "itemType": "preprint",
+            "abstractNote": "Example abstract.",
+            "url": "https://arxiv.org/abs/1234.5678",
+            "_pdf_url": "https://arxiv.org/pdf/1234.5678",
+        }
+
+        with (
+            patch("zoty.connector._find_existing_item_in_collection", side_effect=[("", ""), ("", "")]),
+            patch("zoty.connector._fetch_arxiv_metadata", return_value=item),
+            patch("zoty.connector._push_to_connector"),
+            patch("zoty.connector._find_parent_key_by_title", return_value="PARENT1"),
+            patch("zoty.connector._download_pdf", return_value=("ATTACH1", Path("/tmp/fake.pdf"), 4096)),
+            patch("zoty.connector._attach_pdf_via_rdp", return_value={"status": "attached"}),
+            patch("zoty.connector._add_to_collection_with_retry", return_value={"status": "added"}),
+            patch("zoty.db.schedule_parent_fulltext_refresh") as schedule_mock,
+        ):
+            result = json.loads(connector.add_paper(arxiv_id="1234.5678", collection_key="COLL123"))
+
+        self.assertEqual(result["status"], "created")
+        self.assertTrue(result["pdf_attached"])
+        self.assertTrue(result["collection_added"])
+        schedule_mock.assert_called_once_with(["PARENT1"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import threading
 
 from mcp.server.fastmcp import FastMCP
 
@@ -21,7 +20,7 @@ def search_library(
     item_type: str = "",
     limit: int = 10,
 ) -> str:
-    """BM25 ranked search over Zotero library items by title and abstract.
+    """BM25 ranked search over title, abstract, and indexed attachment full text.
 
     Args:
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
@@ -31,9 +30,30 @@ def search_library(
 
     Returns:
         JSON with ranked search results including title, creators, date, score,
-        truncated abstract, and attachment filepaths when local attachments exist.
+        metadata abstract, optional plain-text snippets, and attachment filepaths.
     """
-    return db.search(query, collection_key=collection_key, item_type=item_type, limit=limit)
+    return db.search(
+        query,
+        collection_key=collection_key,
+        item_type=item_type,
+        limit=limit,
+    )
+
+
+@mcp_server.tool()
+def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
+    """BM25 ranked passage search within one Zotero item.
+
+    Args:
+        item_key: Zotero parent item key to search within
+        query: Search keywords to match against that item's metadata and attachment chunks
+        limit: Maximum number of passage matches to return (default: 5)
+
+    Returns:
+        JSON with the item metadata plus ranked within-item matches, including
+        snippets and attachment context for chunk hits.
+    """
+    return db.search_within_item(item_key=item_key, query=query, limit=limit)
 
 
 @mcp_server.tool()
@@ -182,12 +202,9 @@ def _apply_server_args(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Entry point: build search index in background, start MCP server."""
+    """Entry point: load the active snapshot, queue refresh work, and start MCP."""
     args = _parse_args(argv)
     _apply_server_args(args)
-
-    # Build search index in background thread so MCP transport starts immediately
-    build_thread = threading.Thread(target=db.build_index_background, daemon=True)
-    build_thread.start()
+    db.prepare_search_index()
 
     mcp_server.run(transport=args.transport)
