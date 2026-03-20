@@ -70,6 +70,25 @@ class DbTestCase(unittest.TestCase):
         db._ZOTERO_STORAGE.mkdir(parents=True, exist_ok=True)
         db._zot = None
 
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE collections (
+                    collectionID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    name TEXT NOT NULL
+                );
+                """
+            )
+            conn.executemany(
+                "INSERT INTO collections(collectionID, key, name) VALUES (?, ?, ?)",
+                [
+                    (1, "COLL123", "Valid Collection"),
+                    (2, "COLL456", "Secondary Collection"),
+                ],
+            )
+            conn.commit()
+
     def tearDown(self):
         db._ZOTERO_DB = self.original_db
         db._ZOTERO_STORAGE = self.original_storage
@@ -263,6 +282,10 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachment_count"], 1)
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
+        self.assertEqual(
+            result["collections"],
+            [{"key": "COLL123", "name": "Valid Collection"}],
+        )
 
     def test_get_item_normalizes_item_key_to_uppercase(self):
         zot = Mock()
@@ -285,6 +308,29 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(len(result["creators"]), db._DETAIL_VIEW_MAX_CREATORS + 1)
         self.assertEqual(result["creators"][0], "Author1 Example")
         self.assertEqual(result["creators"][-1], "... and 3 more")
+        self.assertEqual(result["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
+
+    def test_get_item_batches_truncate_creator_lists_more_aggressively(self):
+        def fetch_side_effect(item_key):
+            item = self._paper_item()
+            item["data"]["key"] = item_key
+            item["data"]["creators"] = self._creator_dicts(18)
+            return item
+
+        with (
+            patch("zoty.db._fetch_item_detail", side_effect=fetch_side_effect),
+            patch(
+                "zoty.db._get_item_attachments_by_parent",
+                return_value={"PARENT1": [], "PARENT2": []},
+            ),
+        ):
+            result = json.loads(db.get_item(item_keys=["parent1", "parent2"]))
+
+        self.assertEqual(result["item_keys"], ["PARENT1", "PARENT2"])
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(len(result["items"][0]["creators"]), db._LIST_VIEW_MAX_CREATORS + 1)
+        self.assertEqual(result["items"][0]["creators"][-1], "... and 13 more")
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
 
     def test_get_item_rejects_empty_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
@@ -434,6 +480,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
         self.assertEqual([item["key"] for item in result["items"]], ["PARENT1", "PARENT2"])
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertEqual(
             result["errors"],
             [
@@ -467,6 +514,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(fetch_mock.call_count, 2)
         self.assertEqual(attachments_mock.call_count, 1)
         attachments_mock.assert_called_once_with(["GOOD1", "GOOD2"])
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
 
     def test_list_collections_returns_structured_error_skeleton_for_fetch_failure(self):
         with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
@@ -496,6 +544,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["items"][0]["key"], "PARENT1")
         self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertNotIn("attachments", result["items"][0])
         self.assertEqual(result["items"][0]["snippet_attachment_key"], "ATTACH1")
 
@@ -594,7 +643,7 @@ class AttachmentPathsTests(DbTestCase):
             result["items"][1]["attachments"][0]["filepath"],
             str(db._ZOTERO_STORAGE / "ATTACH2" / "book.epub"),
         )
-        self.assertEqual(open_db_mock.call_count, 1)
+        self.assertEqual(open_db_mock.call_count, 2)
 
 
 class CollectionItemTests(DbTestCase):
@@ -744,6 +793,7 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
         self.assertEqual(result["items"][0]["title"], "First Paper")
         self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertNotIn("attachments", result["items"][0])
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
 
@@ -954,9 +1004,10 @@ class ParentRecordDateNormalizationTests(DbTestCase):
                     itemID INTEGER NOT NULL,
                     orderIndex INTEGER NOT NULL
                 );
-                CREATE TABLE collections (
+                CREATE TABLE IF NOT EXISTS collections (
                     collectionID INTEGER PRIMARY KEY,
-                    key TEXT NOT NULL
+                    key TEXT NOT NULL,
+                    name TEXT NOT NULL
                 );
                 CREATE TABLE itemTags (
                     itemID INTEGER NOT NULL,
@@ -1109,6 +1160,7 @@ class RecentItemsTests(DbTestCase):
         self.assertEqual(result["items"][0]["key"], "ITEM1")
         self.assertEqual(result["items"][0]["attachment_count"], 1)
         self.assertEqual(result["items"][0]["date_added"], "2026-03-10T10:00:00")
+        self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertNotIn("attachments", result["items"][0])
         zot.items.assert_called_once_with(limit=3, sort="dateAdded", direction="desc")
 

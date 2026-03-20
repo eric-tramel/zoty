@@ -91,7 +91,7 @@ def search_library(
     Returns:
         JSON with ranked Zotero items under `items`, including key, title,
         creators, date, score, abstract text truncated to 500 characters,
-        `attachment_count`, optional `attachments` when
+        `attachment_count`, `collections` as `{key, name}` pairs, optional `attachments` when
         `include_attachments=True`, optional plain-text snippets, warnings for
         invalid `collection_key` / `item_type` filters or empty queries, and
         limit metadata.
@@ -174,8 +174,8 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         JSON with `collection_key`, `collection_found`, `items`, and limit
         metadata (`requested_limit`, `applied_limit`, `limit_cap`,
         `limit_capped`). Each item includes `key`, `title`, `creators`,
-        `date`, truncated `abstract` (500 chars), `attachment_count`, and
-        other summary fields.
+        `date`, truncated `abstract` (500 chars), `attachment_count`,
+        `collections` as `{key, name}` pairs, and other summary fields.
     """
     return db.list_collection_items(collection_key, limit=limit)
 
@@ -196,13 +196,15 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
     Returns:
         Single-key requests return JSON with complete item metadata including
         the full untruncated abstract, title, creators, date, DOI, URL, tags,
-        collections, attachment counts, and attachment filepaths. Multi-key
-        requests return JSON with `item_keys`, `items`, `requested`, `total`,
-        and optional per-item `errors`. Duplicate keys across `item_key` and
-        `item_keys` are deduplicated before fetching. Very large creator lists
-        are summarized to keep the payload bounded. Search results already
-        include most fields, so use this only when the full abstract or full
-        attachment records are needed.
+        collections as `{key, name}` pairs, attachment counts, and attachment
+        filepaths. Multi-key requests return JSON with `item_keys`, `items`,
+        `requested`, `total`, and optional per-item `errors`. Duplicate keys
+        across `item_key` and `item_keys` are deduplicated before fetching.
+        Very large creator lists are summarized more aggressively in batch
+        mode to keep the payload bounded while single-item requests keep the
+        detailed creator list. Search results already include most fields, so
+        use this only when the full abstract or full attachment records are
+        needed.
     """
     return db.get_item(item_key=item_key, item_keys=item_keys)
 
@@ -256,8 +258,8 @@ def get_recent_items(limit: int = 10) -> str:
         JSON with `items`, `total`, and limit metadata (`requested_limit`,
         `applied_limit`, `limit_cap`, `limit_capped`). Each item includes
         `key`, `title`, `creators`, `date`, `date_added`, truncated
-        `abstract` (500 chars), `attachment_count`, and other summary
-        fields.
+        `abstract` (500 chars), `attachment_count`, `collections` as
+        `{key, name}` pairs, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 

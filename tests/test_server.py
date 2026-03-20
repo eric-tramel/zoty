@@ -95,11 +95,13 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("`limit=0` returns an empty result set", list_doc)
         self.assertIn("`requested_limit`, `applied_limit`, `limit_cap`, and `limit_capped`", list_doc)
         self.assertIn("truncated `abstract` (500 chars)", list_doc)
+        self.assertIn("`collections` as `{key, name}` pairs", list_doc)
         self.assertIn("default: 10, capped at 25", recent_doc)
         self.assertIn("`limit=0` returns an empty result set", recent_doc)
         self.assertIn("metadata (`requested_limit`, `applied_limit`, `limit_cap`, `limit_capped`)", recent_doc)
         self.assertIn("`date_added`", recent_doc)
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
+        self.assertIn("`collections` as `{key, name}` pairs", recent_doc)
 
     def test_search_library_delegates_to_db(self):
         with patch.object(server.db, "search", return_value='{"items": []}') as db_mock:
@@ -132,6 +134,7 @@ class ServerToolTests(unittest.TestCase):
             normalized_doc,
         )
         self.assertIn("default: 10, capped at 25", normalized_doc)
+        self.assertIn("`collections` as `{key, name}` pairs", doc)
 
     def test_search_within_item_delegates_to_db(self):
         with patch.object(server.db, "search_within_item", return_value='{"matches": []}') as db_mock:
@@ -167,6 +170,9 @@ class ServerToolTests(unittest.TestCase):
 
     def test_response_shape_docstrings_reflect_canonical_keys(self):
         search_within_doc = " ".join(server.search_within_item.__doc__.split())
+        list_doc = " ".join(server.list_collection_items.__doc__.split())
+        recent_doc = " ".join(server.get_recent_items.__doc__.split())
+        get_item_doc = " ".join(server.get_item.__doc__.split())
         self.assertIn("under `items`", server.search_library.__doc__)
         self.assertIn("`matches`", server.search_within_item.__doc__)
         self.assertIn("attachment_key", server.search_within_item.__doc__)
@@ -175,11 +181,14 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("`top_match_type`", server.search_within_item.__doc__)
         self.assertIn("`requested_limit`", server.search_within_item.__doc__)
         self.assertIn("include parent `key` only for multi-item calls", search_within_doc)
-        self.assertIn("attachment_count", server.list_collection_items.__doc__)
-        self.assertIn("attachment_count", server.get_recent_items.__doc__)
-        self.assertIn("date_added", server.get_recent_items.__doc__)
-        self.assertIn("Single-key requests return JSON", server.get_item.__doc__)
-        self.assertIn("`item_keys`, `items`, `requested`, `total`", server.get_item.__doc__)
+        self.assertIn("attachment_count", list_doc)
+        self.assertIn("attachment_count", recent_doc)
+        self.assertIn("date_added", recent_doc)
+        self.assertIn("`collections` as `{key, name}` pairs", list_doc)
+        self.assertIn("`collections` as `{key, name}` pairs", recent_doc)
+        self.assertIn("Single-key requests return JSON", get_item_doc)
+        self.assertIn("`item_keys`, `items`, `requested`, `total`", get_item_doc)
+        self.assertIn("collections as `{key, name}` pairs", get_item_doc)
 
     def test_get_item_delegates_to_db(self):
         with patch.object(server.db, "get_item", return_value='{"key": "ITEM123"}') as db_mock:
@@ -255,6 +264,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("Duplicate keys across `item_key` and `item_keys` are deduplicated", normalized_description)
         self.assertIn("Single-key requests keep the legacy single-item response shape.", normalized_description)
         self.assertIn("`item_keys`, `items`, `requested`, `total`", normalized_description)
+        self.assertIn("collections as `{key, name}` pairs", normalized_description)
 
     def test_add_paper_tool_description_mentions_required_inputs_and_precedence(self):
         description = _get_registered_tool("add_paper").description

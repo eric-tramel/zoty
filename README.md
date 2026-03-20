@@ -126,13 +126,13 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text, with optional plain-text snippets, attachment counts, collection filtering, and case-insensitive item type values like `journalArticle`, `preprint`, `conferencePaper`, `book`, `bookSection`, `thesis`, `report`, and `webpage` |
+| `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text, with optional plain-text snippets, attachment counts, collection filtering, collection key/name pairs, and case-insensitive item type values like `journalArticle`, `preprint`, `conferencePaper`, `book`, `bookSection`, `thesis`, `report`, and `webpage` |
 | `search_within_item` | Find which passages within one or more known items match a keyword query, using `search_library` results to drill into a specific paper or compare several papers; top-level item summaries carry parent titles, and per-match parent `key` is only repeated for multi-item ranking |
 | `list_collections` | List all collections with keys, names, and item counts |
-| `list_collection_items` | List items in a specific collection |
-| `get_item` | Full metadata for a single `item_key` or batch `item_keys`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. Single-key requests keep the existing item payload, while batch requests return `items` plus optional per-item `errors` |
+| `list_collection_items` | List items in a specific collection, including collection key/name pairs on each item |
+| `get_item` | Full metadata for a single `item_key` or batch `item_keys`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. Single-key requests keep the detailed item payload, while batch requests return compact item records with `items` plus optional per-item `errors` |
 | `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for a single `item_key` or batch `item_keys`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. Both can be combined and at least one must be provided |
-| `get_recent_items` | Recently added items, sorted by date |
+| `get_recent_items` | Recently added items, sorted by date, with collection key/name pairs on each item |
 | `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
 
 Attachment payloads include `linkMode` as a descriptive string (`imported_file`, `imported_url`, `linked_file`, or `linked_url`) instead of Zotero's internal numeric codes.
