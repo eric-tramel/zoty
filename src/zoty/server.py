@@ -114,7 +114,7 @@ def get_bibtex_and_citation_for_items(
     style: str = "chicago-note-bibliography",
     locale: str = "en-US",
 ) -> str:
-    """Get BibTeX, citation text, and bibliography text for one or more Zotero items.
+    """Get BibTeX, citation text, and bibliography text for one or more Zotero items. Provide at least one of `item_key` or `item_keys`.
 
     Args:
         item_key: A single Zotero item key for one item. Use the `key` field from

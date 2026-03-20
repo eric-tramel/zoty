@@ -1648,7 +1648,15 @@ class CitationEntryTests(DbTestCase):
             return {
                 "citation": [f"<span>{item_key} &amp; cite</span>"],
                 "bib": [f"<div>{item_key} <i>reference</i></div>"],
-                "bibtex": [f"@article{{{item_key},\n  title={{Example}}\n}}"],
+                "bibtex": [
+                    (
+                        f"@article{{{item_key},\n"
+                        "  title={Example},\n"
+                        "  abstract={Detailed summary with {nested} braces},\n"
+                        "  year={2026}\n"
+                        "}"
+                    )
+                ],
             }
 
         zot.item.side_effect = item_side_effect
@@ -1673,7 +1681,7 @@ class CitationEntryTests(DbTestCase):
                     "key": "ITEM123",
                     "citation": "ITEM123 & cite",
                     "bibliography": "ITEM123 reference",
-                    "bibtex": "@article{ITEM123,\n  title={Example}\n}",
+                    "bibtex": "@article{ITEM123,\n  title={Example},\n  year={2026}\n}",
                 }
             ],
         )
@@ -1750,7 +1758,7 @@ class CitationEntryTests(DbTestCase):
 
         self.assertEqual(result["total"], 2)
         self.assertEqual(zot.item.call_count, 2)
-        self.assertEqual([args[0] for args, _kwargs in zot.item.call_args_list], ["GOOD1", "GOOD2"])
+        self.assertCountEqual([args[0] for args, _kwargs in zot.item.call_args_list], ["GOOD1", "GOOD2"])
 
         for _args, kwargs in zot.item.call_args_list:
             self.assertEqual(kwargs["format"], "json")
@@ -1758,6 +1766,33 @@ class CitationEntryTests(DbTestCase):
             self.assertEqual(kwargs["style"], "apa")
             self.assertEqual(kwargs["locale"], "en-GB")
             self.assertNotIn("content", kwargs)
+
+    def test_get_bibtex_and_citation_for_items_fetches_multiple_exports_concurrently(self):
+        barrier = threading.Barrier(2)
+
+        def fetch_side_effect(item_key, *, style, locale):
+            self.assertEqual(style, "apa")
+            self.assertEqual(locale, "en-GB")
+            barrier.wait(timeout=1)
+            return {
+                "citation": f"<span>{item_key} cite</span>",
+                "bibliography": f"<div>{item_key} ref</div>",
+                "bibtex": f"@article{{{item_key},\n  abstract={{A long abstract}}\n}}",
+            }
+
+        with patch("zoty.db._fetch_item_exports", side_effect=fetch_side_effect):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_keys=["good1", "good2"],
+                    style="apa",
+                    locale="en-GB",
+                )
+            )
+
+        self.assertEqual(result["total"], 2)
+        self.assertNotIn("errors", result)
+        for item in result["items"]:
+            self.assertNotIn("abstract", item["bibtex"].lower())
 
     def test_get_bibtex_and_citation_for_items_requires_at_least_one_key(self):
         result = json.loads(db.get_bibtex_and_citation_for_items())

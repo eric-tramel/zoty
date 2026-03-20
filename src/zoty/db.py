@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -39,6 +40,7 @@ _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_VIEW_MAX_CREATORS = 5
+_CITATION_EXPORT_MAX_WORKERS = 4
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
     0: "imported_file",
@@ -434,6 +436,75 @@ def _xhtml_to_text(fragment: str) -> str:
     """Collapse Zotero's XHTML bibliography/citation output into plain text."""
     text = re.sub(r"<[^>]+>", " ", fragment)
     return " ".join(html.unescape(text).split())
+
+
+def _strip_bibtex_field(bibtex: str, field_name: str) -> str:
+    """Remove a top-level BibTeX field from each entry while preserving the rest."""
+    if not bibtex:
+        return ""
+
+    field_pattern = re.compile(rf"^[ \t]*{re.escape(field_name)}[ \t]*=", re.IGNORECASE)
+    output: list[str] = []
+    index = 0
+    length = len(bibtex)
+
+    while index < length:
+        if index == 0 or bibtex[index - 1] == "\n":
+            line_end = bibtex.find("\n", index)
+            if line_end == -1:
+                line_end = length
+
+            field_match = field_pattern.match(bibtex[index:line_end])
+            if field_match:
+                value_index = index + field_match.end()
+                while value_index < length and bibtex[value_index] in " \t\r\n":
+                    value_index += 1
+
+                if value_index < length and bibtex[value_index] == "{":
+                    depth = 0
+                    while value_index < length:
+                        char = bibtex[value_index]
+                        if char == "{" and (value_index == 0 or bibtex[value_index - 1] != "\\"):
+                            depth += 1
+                        elif char == "}" and (value_index == 0 or bibtex[value_index - 1] != "\\"):
+                            depth -= 1
+                            if depth == 0:
+                                value_index += 1
+                                break
+                        value_index += 1
+                elif value_index < length and bibtex[value_index] == "\"":
+                    value_index += 1
+                    while value_index < length:
+                        char = bibtex[value_index]
+                        if char == "\"" and bibtex[value_index - 1] != "\\":
+                            value_index += 1
+                            break
+                        value_index += 1
+                else:
+                    while value_index < length and bibtex[value_index] not in ",\n":
+                        value_index += 1
+
+                while value_index < length and bibtex[value_index] in " \t":
+                    value_index += 1
+                if value_index < length and bibtex[value_index] == ",":
+                    value_index += 1
+                while value_index < length and bibtex[value_index] in " \t":
+                    value_index += 1
+                if value_index < length and bibtex[value_index] == "\n":
+                    value_index += 1
+
+                index = value_index
+                continue
+
+        output.append(bibtex[index])
+        index += 1
+
+    return "".join(output)
+
+
+def _compact_bibtex_export(bibtex: str) -> str:
+    """Drop fields that duplicate data already provided by other tools."""
+    return _strip_bibtex_field(bibtex, "abstract").strip()
 
 
 def _fetch_item_exports(
@@ -2018,21 +2089,40 @@ def get_bibtex_and_citation_for_items(
     results: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
 
-    for key in requested_keys:
+    def _append_success(key: str, exports: dict[str, str]) -> None:
+        results.append({
+            "key": key,
+            "citation": _xhtml_to_text(exports["citation"]),
+            "bibliography": _xhtml_to_text(exports["bibliography"]),
+            "bibtex": _compact_bibtex_export(exports["bibtex"]),
+        })
+
+    if len(requested_keys) == 1:
+        key = requested_keys[0]
         try:
             exports = _fetch_item_exports(key, style=style, locale=locale)
-
-            results.append({
-                "key": key,
-                "citation": _xhtml_to_text(exports["citation"]),
-                "bibliography": _xhtml_to_text(exports["bibliography"]),
-                "bibtex": exports["bibtex"].strip(),
-            })
+            _append_success(key, exports)
         except Exception as exc:
             errors.append({
                 "key": key,
                 "error": f"Failed to fetch citation entry: {exc}",
             })
+    else:
+        max_workers = min(_CITATION_EXPORT_MAX_WORKERS, len(requested_keys))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_fetch_item_exports, key, style=style, locale=locale)
+                for key in requested_keys
+            ]
+            for key, future in zip(requested_keys, futures):
+                try:
+                    exports = future.result()
+                    _append_success(key, exports)
+                except Exception as exc:
+                    errors.append({
+                        "key": key,
+                        "error": f"Failed to fetch citation entry: {exc}",
+                    })
 
     payload: dict[str, Any] = {
         "items": results,
