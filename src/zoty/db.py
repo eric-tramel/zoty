@@ -1852,11 +1852,15 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
 def get_item(item_key: str) -> str:
     """Full metadata for a single item."""
+    normalized_item_key = item_key.strip()
+    if not normalized_item_key:
+        return json.dumps({"error": "Provide item_key"})
+
     try:
         zot = _get_zot()
-        item = zot.item(item_key)
+        item = zot.item(normalized_item_key)
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch item {item_key}: {exc}"})
+        return json.dumps({"error": f"Failed to fetch item {normalized_item_key}: {exc}"})
 
     return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
 
