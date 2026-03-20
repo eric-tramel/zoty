@@ -111,6 +111,7 @@ class _SearchState:
 
 
 _index_lock = threading.Lock()
+_zot_lock = threading.Lock()
 _refresh_in_progress = False
 _refresh_requested = False
 _search_state: _SearchState | None = None
@@ -128,9 +129,14 @@ def _snapshots_dir() -> Path:
 def _get_zot() -> zotero.Zotero:
     """Return the shared pyzotero client, creating it on first call."""
     global _zot
-    if _zot is None:
-        _zot = zotero.Zotero("0", "user", local=True)
-    return _zot
+    zot = _zot
+    if zot is not None:
+        return zot
+
+    with _zot_lock:
+        if _zot is None:
+            _zot = zotero.Zotero("0", "user", local=True)
+        return _zot
 
 
 def _format_creators(creators: list[dict]) -> list[str]:
