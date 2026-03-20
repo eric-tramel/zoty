@@ -213,41 +213,16 @@ class ServerToolTests(unittest.TestCase):
     def test_get_bibtex_tool_schema_requires_item_key_or_item_keys(self):
         schema = _get_registered_tool("get_bibtex_and_citation_for_items").inputSchema
 
-        self.assertEqual(
-            schema.get("anyOf"),
-            [
-                {
-                    "required": ["item_key"],
-                    "properties": {
-                        "item_key": {
-                            "type": "string",
-                            "minLength": 1,
-                        },
-                    },
-                },
-                {
-                    "required": ["item_keys"],
-                    "properties": {
-                        "item_keys": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "minLength": 1,
-                            },
-                            "minItems": 1,
-                        },
-                    },
-                },
-            ],
-        )
+        # anyOf is not allowed at the top level by the Claude API
+        self.assertNotIn("anyOf", schema)
         self.assertEqual(
             schema["properties"]["item_key"]["description"],
-            "A single Zotero item key. Provide this, `item_keys`, or both.",
+            "A single Zotero item key. At least one of `item_key` or `item_keys` must be provided.",
         )
         self.assertIsNone(schema["properties"]["item_key"]["default"])
         self.assertEqual(
             schema["properties"]["item_keys"]["description"],
-            "A list of Zotero item keys for batch export. Provide this, `item_key`, or both.",
+            "A list of Zotero item keys for batch export. At least one of `item_key` or `item_keys` must be provided.",
         )
 
     def test_search_library_tool_description_mentions_item_type_values_and_warning_behavior(self):

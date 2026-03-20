@@ -320,35 +320,11 @@ def _augment_tool_schemas() -> None:
     if tool is None:
         return
 
-    tool.parameters["anyOf"] = [
-        {
-            "required": ["item_key"],
-            "properties": {
-                "item_key": {
-                    "type": "string",
-                    "minLength": 1,
-                },
-            },
-        },
-        {
-            "required": ["item_keys"],
-            "properties": {
-                "item_keys": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1,
-                    },
-                    "minItems": 1,
-                },
-            },
-        },
-    ]
     tool.parameters["properties"]["item_key"]["description"] = (
-        "A single Zotero item key. Provide this, `item_keys`, or both."
+        "A single Zotero item key. At least one of `item_key` or `item_keys` must be provided."
     )
     tool.parameters["properties"]["item_keys"]["description"] = (
-        "A list of Zotero item keys for batch export. Provide this, `item_key`, or both."
+        "A list of Zotero item keys for batch export. At least one of `item_key` or `item_keys` must be provided."
     )
 
 
