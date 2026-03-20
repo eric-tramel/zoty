@@ -107,12 +107,12 @@ def list_collections() -> str:
 
 
 @mcp_server.tool()
-def list_collection_items(collection_key: str, limit: int = 50) -> str:
+def list_collection_items(collection_key: str, limit: int = db._LIST_RESULT_LIMIT_CAP) -> str:
     """List items in a specific Zotero collection.
 
     Args:
         collection_key: The Zotero collection key (from list_collections)
-        limit: Requested items to return before the cap is applied (default: 50)
+        limit: Requested items to return before the cap is applied (default: 25)
 
     Returns:
         JSON with `collection_key`, `collection_found`, `items`, and limit
@@ -192,8 +192,8 @@ def get_recent_items(limit: int = 10) -> str:
 
     Returns:
         JSON with `items`, `total`, and limit metadata. Each item includes
-        `key`, `title`, `creators`, `date`, truncated `abstract` (500 chars),
-        `attachment_count`, and other summary fields.
+        `key`, `title`, `creators`, `date`, `date_added`, truncated
+        `abstract` (500 chars), `attachment_count`, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 

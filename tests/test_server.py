@@ -85,6 +85,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("truncated `abstract` (500 chars)", list_doc)
         self.assertIn("Requested items to return before the cap is applied", recent_doc)
         self.assertIn("JSON with `items`, `total`, and limit metadata.", recent_doc)
+        self.assertIn("`date_added`", recent_doc)
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
 
     def test_search_library_delegates_to_db(self):
