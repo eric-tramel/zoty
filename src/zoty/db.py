@@ -516,6 +516,15 @@ def _normalize_item_keys(item_key: str = "", item_keys: list[str] | None = None)
     return normalized
 
 
+def _unique_item_keys(item_key: str = "", item_keys: list[str] | None = None) -> list[str]:
+    """Normalize keys and drop duplicates while preserving order."""
+    unique: list[str] = []
+    for key in _normalize_item_keys(item_key=item_key, item_keys=item_keys):
+        if key not in unique:
+            unique.append(key)
+    return unique
+
+
 def _fetch_item_detail(item_key: str) -> dict[str, Any]:
     """Fetch one Zotero item detail payload."""
     return _get_zot().item(item_key)
@@ -685,13 +694,29 @@ def _citation_fetch_error_message(item_key: str, style: str, exc: Exception) -> 
     lowered = str(exc).lower()
     response_body = _response_body(exc).lower()
 
+    style_error_markers = (
+        "not found",
+        "invalid",
+        "does not appear to be valid",
+        "does not exist",
+        "not available",
+        "missing",
+        "could not find",
+        "could not locate",
+        "could not load",
+        "unrecognized",
+        "unsupported",
+    )
+
     if status == 404 and (
         "/styles/" in url
         or "citationstyles.org" in url
-        or "/styles/" in lowered
-        or "citationstyles.org" in lowered
-        or "citation style" in response_body
-        or ("style" in response_body and "not found" in response_body)
+        or "/styles/" in response_body
+        or "citationstyles.org" in response_body
+        or (
+            ("style" in response_body or "csl" in response_body or "citation" in response_body)
+            and any(marker in response_body for marker in style_error_markers)
+        )
     ):
         return f"Citation style {style} was not found"
     if status == 404 or "not found" in lowered:
@@ -2541,7 +2566,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
 def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
     """Full metadata for one item or a batch of items."""
-    requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
+    requested_keys = _unique_item_keys(item_key=item_key, item_keys=item_keys)
     if not requested_keys:
         if item_keys is not None:
             return json.dumps({
@@ -2620,8 +2645,12 @@ def get_bibtex_and_citation_for_items(
     style: str = "chicago-note-bibliography",
     locale: str = "en-US",
 ) -> str:
-    """Return BibTeX plus formatted citation/bibliography text for one or more items."""
-    requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
+    """Return BibTeX plus formatted citation/bibliography text for one or more items.
+
+    The response always uses the batch shape under `items`, even when only
+    one key is requested.
+    """
+    requested_keys = _unique_item_keys(item_key=item_key, item_keys=item_keys)
     if not requested_keys:
         return json.dumps({
             "error": "Provide item_key or item_keys",

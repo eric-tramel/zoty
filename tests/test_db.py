@@ -2347,6 +2347,9 @@ class CitationEntryTests(DbTestCase):
             ],
         )
 
+    def test_get_bibtex_and_citation_for_items_returns_batch_shape_for_single_key(self):
+        self.assertIn("batch shape under `items`", db.get_bibtex_and_citation_for_items.__doc__)
+
     def test_get_bibtex_and_citation_for_items_returns_multiple_items_and_partial_errors(self):
         zot = Mock()
 
@@ -2400,6 +2403,46 @@ class CitationEntryTests(DbTestCase):
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
 
+    def test_get_bibtex_and_citation_for_items_deduplicates_combined_item_key_inputs(self):
+        zot = Mock()
+
+        def item_side_effect(item_key, **kwargs):
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
+            return {
+                "citation": [f"<span>{item_key} cite</span>"],
+                "bib": [f"<div>{item_key} ref</div>"],
+                "bibtex": [f"@article{{{item_key}}}"],
+            }
+
+        zot.item.side_effect = item_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_key="good1",
+                    item_keys=[" good1 ", "good2", "GOOD2", "good1"],
+                )
+            )
+
+        self.assertEqual(result["items"], [
+            {
+                "key": "GOOD1",
+                "citation": "GOOD1 cite",
+                "bibliography": "GOOD1 ref",
+                "bibtex": "@article{GOOD1}",
+            },
+            {
+                "key": "GOOD2",
+                "citation": "GOOD2 cite",
+                "bibliography": "GOOD2 ref",
+                "bibtex": "@article{GOOD2}",
+            },
+        ])
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(zot.item.call_count, 2)
+
     def test_get_bibtex_and_citation_for_items_sanitizes_invalid_style_errors(self):
         zot = Mock()
         zot.item.side_effect = FakeHttpError(
@@ -2427,6 +2470,43 @@ class CitationEntryTests(DbTestCase):
             ],
         )
         self.assertNotIn("zotero.org/styles", json.dumps(result))
+
+    def test_get_bibtex_and_citation_for_items_sanitizes_invalid_csl_style_errors(self):
+        with patch(
+            "zoty.db._fetch_item_exports",
+            side_effect=FakeHttpError(
+                (
+                    "Code: 404 URL: "
+                    "http://localhost:23119/api/users/0/items/ITEM123"
+                    "?format=json&include=bib,citation,bibtex&style=bad-style&locale=en-US "
+                    "Method: GET Response: Invalid CSL style: bad-style"
+                ),
+                status_code=404,
+                url=(
+                    "http://localhost:23119/api/users/0/items/ITEM123"
+                    "?format=json&include=bib,citation,bibtex&style=bad-style&locale=en-US"
+                ),
+            ),
+        ):
+            result = json.loads(
+                db.get_bibtex_and_citation_for_items(
+                    item_key="item123",
+                    style="bad-style",
+                    locale="en-US",
+                )
+            )
+
+        self.assertEqual(result["error"], "Citation style bad-style was not found")
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "ITEM123",
+                    "error": "Citation style bad-style was not found",
+                }
+            ],
+        )
+        self.assertNotIn("Item ITEM123 was not found", json.dumps(result))
 
     def test_get_bibtex_and_citation_for_items_makes_one_export_call_per_item(self):
         zot = Mock()
@@ -2515,6 +2595,37 @@ class CitationEntryTests(DbTestCase):
         self.assertIn(f"Author{db._BIBTEX_MAX_AUTHORS} Example", bibtex)
         self.assertNotIn(f"Author{db._BIBTEX_MAX_AUTHORS + 1} Example", bibtex)
         self.assertIn("and others", bibtex)
+
+    def test_get_item_deduplicates_combined_item_key_inputs(self):
+        zot = Mock()
+
+        def item_side_effect(item_key, **kwargs):
+            item = self._paper_item()
+            item["data"]["key"] = item_key
+            item["data"]["title"] = f"{item_key} title"
+            return item
+
+        zot.item.side_effect = item_side_effect
+
+        with (
+            patch("zoty.db._get_zot", return_value=zot),
+            patch(
+                "zoty.db._get_item_attachments_by_parent",
+                return_value={"PARENT1": [], "PARENT2": []},
+            ),
+        ):
+            result = json.loads(
+                db.get_item(
+                    item_key="parent1",
+                    item_keys=[" parent1 ", "parent2", "PARENT2", "parent1"],
+                )
+            )
+
+        self.assertEqual(result["item_keys"], ["PARENT1", "PARENT2"])
+        self.assertEqual(result["requested"], 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([item["key"] for item in result["items"]], ["PARENT1", "PARENT2"])
+        self.assertEqual(zot.item.call_count, 2)
 
     def test_get_bibtex_and_citation_for_items_sanitizes_item_not_found_http_errors(self):
         with patch(
