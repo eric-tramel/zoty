@@ -71,17 +71,19 @@ def search_within_item(
         item_keys: Optional additional Zotero parent item keys to search
             within together with item_key for cross-item ranking.
         query: Search keywords to match against that item's metadata and attachment chunks
-        limit: Maximum number of passage matches to return (default: 5)
+        limit: Requested passage matches to return before the cap is applied
+            (default: 5)
 
     Returns:
-        JSON with ranked passage `matches`, including `snippet`,
+        JSON with ranked passage `matches`, limit metadata, and `snippet`,
         `chunk_index`, `char_start`, and `char_end` for every hit. When a
         match comes from an attachment chunk, it also includes
         `attachment_key`, `attachment_title`, and `attachment_filepath` so you
         can identify the source file for that passage. Single-item calls
         return `key` and `item`; multi-item calls return `item_keys` and
-        `items`. Matches omit the redundant parent title and include parent
-        `key` only for multi-item calls.
+        `items`, where each item includes per-item `match_count` and optional
+        `top_match` to summarize relevance. Matches omit the redundant parent
+        title and include parent `key` only for multi-item calls.
     """
     return db.search_within_item(
         item_key=item_key,

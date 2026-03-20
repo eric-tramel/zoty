@@ -146,12 +146,18 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("chunk_index", description)
         self.assertIn("char_start", description)
         self.assertIn("char_end", description)
+        self.assertIn("match_count", description)
+        self.assertIn("top_match", description)
+        self.assertIn("limit metadata", description)
 
     def test_response_shape_docstrings_reflect_canonical_keys(self):
         search_within_doc = " ".join(server.search_within_item.__doc__.split())
         self.assertIn("under `items`", server.search_library.__doc__)
         self.assertIn("`matches`", server.search_within_item.__doc__)
         self.assertIn("attachment_key", server.search_within_item.__doc__)
+        self.assertIn("limit metadata", server.search_within_item.__doc__)
+        self.assertIn("match_count", server.search_within_item.__doc__)
+        self.assertIn("top_match", server.search_within_item.__doc__)
         self.assertIn("include parent `key` only for multi-item calls", search_within_doc)
         self.assertIn("attachment_count", server.list_collection_items.__doc__)
         self.assertIn("attachment_count", server.get_recent_items.__doc__)
