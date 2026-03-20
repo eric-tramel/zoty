@@ -428,7 +428,8 @@ def _download_pdf(pdf_url: str, filename: str) -> tuple[str, Path, int] | None:
     """Download PDF to Zotero storage. Returns (att_key, dest_path, size) or None."""
     tmp = ""
     try:
-        tmp = tempfile.mktemp(suffix=".pdf")
+        fd, tmp = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
         _download_with_rate_limit(pdf_url, tmp)
         file_size = os.path.getsize(tmp)
         if file_size < 1000:
