@@ -130,9 +130,27 @@ class ServerToolTests(unittest.TestCase):
             limit=5,
         )
 
+    def test_search_within_item_tool_description_mentions_attachment_chunk_fields(self):
+        async def get_tool_description():
+            tools = await server.mcp_server.list_tools()
+            for tool in tools:
+                if tool.name == "search_within_item":
+                    return tool.description
+            self.fail("search_within_item tool was not registered")
+
+        description = asyncio.run(get_tool_description())
+
+        self.assertIn("attachment_key", description)
+        self.assertIn("attachment_title", description)
+        self.assertIn("attachment_filepath", description)
+        self.assertIn("chunk_index", description)
+        self.assertIn("char_start", description)
+        self.assertIn("char_end", description)
+
     def test_response_shape_docstrings_reflect_canonical_keys(self):
         self.assertIn("under `items`", server.search_library.__doc__)
         self.assertIn("`matches`", server.search_within_item.__doc__)
+        self.assertIn("attachment_key", server.search_within_item.__doc__)
         self.assertIn("attachment_count", server.list_collection_items.__doc__)
         self.assertIn("attachment_count", server.get_recent_items.__doc__)
 
