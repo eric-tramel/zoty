@@ -91,10 +91,12 @@ def search_library(
     Returns:
         JSON with ranked Zotero items under `items`, including key, title,
         creators, date, score, abstract text truncated to 500 characters,
-        `attachment_count`, `collections` as `{key, name}` pairs, optional `attachments` when
-        `include_attachments=True`, optional plain-text snippets, warnings for
-        invalid `collection_key` / `item_type` filters or empty queries, and
-        limit metadata. Duplicate parent items that share a DOI or URL are
+        `attachment_count`, `collections` as `{key, name}` pairs, optional
+        `attachments` when `include_attachments=True` (each attachment keeps
+        only safe summary fields such as key, title, contentType, and
+        linkMode), optional plain-text snippets, warnings for invalid
+        `collection_key` / `item_type` filters or empty queries, and limit
+        metadata. Duplicate parent items that share a DOI or URL are
         collapsed before limiting, preferring the richer record when
         duplicates exist. `total` reports the deduplicated match count and
         `returned_count` reports how many items were actually returned.
@@ -110,42 +112,40 @@ def search_library(
 
 @mcp_server.tool()
 def search_within_item(
-    item_key: str,
+    item_keys: list[str],
     query: str,
     limit: int = 5,
-    item_keys: list[str] | None = None,
 ) -> str:
     """Find which passages within one or more known items match a keyword query.
 
     Use after `search_library` to drill into one paper, or compare passage-level
-    relevance across several papers in a single call.
+    relevance across several papers in a single call. The public interface uses
+    `item_keys` as the canonical key input.
 
     Args:
-        item_key: Zotero parent item key to search within. Use the `key`
+        item_keys: Zotero parent item keys to search within. Use the `key`
             field from `search_library`, `list_collection_items`, or
             `get_recent_items` results (for example, `X9KJ2M4P`).
-        item_keys: Optional additional Zotero parent item keys to search
-            within together with item_key for cross-item ranking.
-        query: Search keywords to match against that item's metadata and attachment chunks
+        query: Search keywords to match against those items' metadata and attachment chunks
         limit: Requested passage matches to return (default: 5, capped at
             25). The response includes `requested_limit`, `applied_limit`,
             `limit_cap`, and `limit_capped` so callers can detect clamping.
 
     Returns:
-        JSON with ranked passage `matches`, including `snippet`,
-        `chunk_index`, `char_start`, and `char_end` for every hit. When a
-        match comes from an attachment chunk, it also includes
-        `attachment_key`, `attachment_title`, and `attachment_filepath` so you
-        can identify the source file for that passage. Single-item calls
-        return `key` and `item`; multi-item calls return `item_keys` and
-        `items`, where each item summary also includes
-        `returned_match_count`, `top_score`, and `top_match_type` so agents
-        can compare relevance across the requested items without extra calls.
-        Matches omit the redundant parent title and include parent `key` only
-        for multi-item calls.
+        JSON with ranked passage `matches`, including `score`,
+        `match_type`, `snippet`, `chunk_index`, `char_start`, and
+        `char_end` for every hit. When a match comes from an attachment
+        chunk, it also includes `attachment_key` and `attachment_title` so
+        you can identify the source attachment without leaking local file
+        paths. Single-item calls return `key` and `item`; multi-item calls
+        return `item_keys` and `items`, where each item summary includes
+        `key`, `title`, `itemType`, `returned_match_count`, `top_score`, and
+        `top_match_type` so agents can compare relevance across the requested
+        items without extra calls. Matches omit the redundant parent title
+        and itemType, and include parent `key` only for multi-item calls.
     """
     return db.search_within_item(
-        item_key=item_key,
+        item_key="",
         item_keys=item_keys,
         query=query,
         limit=limit,
@@ -202,8 +202,9 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
     Returns:
         Single-key requests return JSON with complete item metadata including
         the full untruncated abstract, title, creators, date, DOI, URL, tags,
-        collections as `{key, name}` pairs, attachment counts, and attachment
-        filepaths. Multi-key requests return JSON with `item_keys`, `items`,
+        collections as `{key, name}` pairs, attachment counts, and
+        privacy-safe attachment metadata that omits local file paths.
+        Multi-key requests return JSON with `item_keys`, `items`,
         `requested`, `total`, and optional per-item `errors`. Duplicate keys
         across `item_key` and `item_keys` are deduplicated before fetching.
         Very large creator lists are summarized more aggressively in batch

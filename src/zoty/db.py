@@ -343,7 +343,7 @@ def _log_attachment_helper_error(message: str, exc: Exception) -> None:
 
 
 def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """Return attachment metadata for each requested parent item key."""
+    """Return privacy-safe attachment metadata for each requested parent item key."""
     normalized_keys: list[str] = []
     for item_key in item_keys:
         cleaned = item_key.strip().upper()
@@ -363,8 +363,7 @@ def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict
                            child.key AS attachment_key,
                            COALESCE(MAX(CASE WHEN f.fieldName = 'title' THEN idv.value END), '') AS attachment_title,
                            ia.contentType AS content_type,
-                           ia.linkMode AS link_mode,
-                           ia.path AS raw_path
+                           ia.linkMode AS link_mode
                     FROM items parent
                     JOIN itemAttachments ia ON parent.itemID = ia.parentItemID
                     JOIN items child ON ia.itemID = child.itemID
@@ -372,7 +371,7 @@ def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict
                     LEFT JOIN itemDataValues idv ON id.valueID = idv.valueID
                     LEFT JOIN fields f ON id.fieldID = f.fieldID
                     WHERE parent.key IN ({placeholders})
-                    GROUP BY parent.key, child.key, ia.contentType, ia.linkMode, ia.path, child.dateAdded
+                    GROUP BY parent.key, child.key, ia.contentType, ia.linkMode, child.dateAdded
                     ORDER BY parent.key ASC, child.dateAdded ASC""",
                 normalized_keys,
             ).fetchall()
@@ -386,22 +385,18 @@ def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict
     for row in rows:
         parent_key = str(row["parent_key"])
         attachment_key = str(row["attachment_key"])
-        filepath = _resolve_attachment_filepath(attachment_key, row["raw_path"] or "")
-        if not filepath:
-            continue
         attachments_by_parent.setdefault(parent_key, []).append({
             "key": attachment_key,
             "title": row["attachment_title"],
             "contentType": row["content_type"] or "",
             "linkMode": _format_link_mode(row["link_mode"]),
-            "filepath": filepath,
         })
 
     return attachments_by_parent
 
 
 def _get_item_attachments(item_key: str) -> list[dict[str, Any]]:
-    """Return attachment metadata and resolved filepaths for one parent item."""
+    """Return privacy-safe attachment metadata for one parent item."""
     key = item_key.strip().upper()
     if not key:
         return []
@@ -547,6 +542,7 @@ def _empty_item_summary(item_key: str = "") -> dict[str, str]:
     return {
         "key": item_key,
         "title": "",
+        "itemType": "",
     }
 
 
@@ -2005,6 +2001,7 @@ def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
     return {
         "key": parent["key"],
         "title": parent["title"],
+        "itemType": parent["itemType"],
     }
 
 
@@ -2099,7 +2096,6 @@ def _result_from_doc(
 ) -> dict[str, Any]:
     snippet_source = doc["text"] if doc["doc_kind"] == "attachment_chunk" else (parent["abstract"] or doc["text"])
     result = {
-        "itemType": parent["itemType"],
         "score": round(score, 4),
         "match_type": doc["doc_kind"],
         "snippet": _snippet_from_text(snippet_source, query_terms),
@@ -2114,7 +2110,6 @@ def _result_from_doc(
         attachment = attachments_by_key.get(doc["attachment_key"], {})
         result["attachment_key"] = doc["attachment_key"]
         result["attachment_title"] = attachment.get("title", "")
-        result["attachment_filepath"] = attachment.get("filepath", "")
 
     return result
 
@@ -2349,7 +2344,11 @@ def search_within_item(
     limit: int = 5,
     item_keys: list[str] | None = None,
 ) -> str:
-    """BM25 ranked passage search within one or more parent items."""
+    """BM25 ranked passage search within one or more parent items.
+
+    The public caller should prefer `item_keys`; `item_key` remains a narrow
+    compatibility shim for older internal callers.
+    """
     requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_WITHIN_RESULT_LIMIT_CAP)
     requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
     unique_requested_keys: list[str] = []
@@ -2364,7 +2363,7 @@ def search_within_item(
             matches=[],
             requested_limit=requested_limit,
             applied_limit=applied_limit,
-            error="Provide item_key or item_keys",
+            error="Provide item_keys",
         )
 
     multi_item = len(unique_requested_keys) > 1

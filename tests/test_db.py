@@ -211,7 +211,7 @@ class AttachmentPathsTests(DbTestCase):
             )
             conn.commit()
 
-    def test_get_item_attachments_resolves_storage_filepaths(self):
+    def test_get_item_attachments_returns_slim_metadata_without_filepaths(self):
         attachments = db._get_item_attachments("PARENT1")
 
         self.assertEqual(
@@ -222,7 +222,6 @@ class AttachmentPathsTests(DbTestCase):
                     "title": "Attached PDF",
                     "contentType": "application/pdf",
                     "linkMode": "imported_file",
-                    "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
                 }
             ],
         )
@@ -271,7 +270,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(db._format_link_mode(99), "unknown(99)")
         self.assertEqual(db._format_link_mode(None), "unknown")
 
-    def test_get_item_includes_attachment_filepaths(self):
+    def test_get_item_includes_slim_attachment_metadata(self):
         zot = Mock()
         zot.item.return_value = self._paper_item()
 
@@ -280,12 +279,21 @@ class AttachmentPathsTests(DbTestCase):
 
         self.assertEqual(result["key"], "PARENT1")
         self.assertEqual(result["attachment_count"], 1)
-        self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
+        self.assertEqual(
+            result["attachments"][0],
+            {
+                "key": "ATTACH1",
+                "title": "Attached PDF",
+                "contentType": "application/pdf",
+                "linkMode": "imported_file",
+            },
+        )
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
         self.assertEqual(
             result["collections"],
             [{"key": "COLL123", "name": "Valid Collection"}],
         )
+        self.assertNotIn(str(db._ZOTERO_STORAGE), json.dumps(result))
 
     def test_get_item_normalizes_item_key_to_uppercase(self):
         zot = Mock()
@@ -636,13 +644,25 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual([row["key"] for row in result["items"]], ["PARENT1", "PARENT2"])
         self.assertEqual([row["attachment_count"] for row in result["items"]], [1, 1])
         self.assertEqual(
-            result["items"][0]["attachments"][0]["filepath"],
-            str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
+            result["items"][0]["attachments"][0],
+            {
+                "key": "ATTACH1",
+                "title": "Attached PDF",
+                "contentType": "application/pdf",
+                "linkMode": "imported_file",
+            },
         )
         self.assertEqual(
-            result["items"][1]["attachments"][0]["filepath"],
-            str(db._ZOTERO_STORAGE / "ATTACH2" / "book.epub"),
+            result["items"][1]["attachments"][0],
+            {
+                "key": "ATTACH2",
+                "title": "Attached EPUB",
+                "contentType": "application/epub+zip",
+                "linkMode": "imported_url",
+            },
         )
+        self.assertEqual(open_db_mock.call_count, 2)
+        self.assertNotIn(str(db._ZOTERO_STORAGE), json.dumps(result))
         self.assertEqual(open_db_mock.call_count, 2)
 
 
@@ -1953,7 +1973,10 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("parent1", "query", limit=3))
 
         self.assertEqual(result["key"], "PARENT1")
-        self.assertEqual(result["item"], {"key": "PARENT1", "title": "First Paper"})
+        self.assertEqual(
+            result["item"],
+            {"key": "PARENT1", "title": "First Paper", "itemType": "preprint"},
+        )
         self.assertNotIn("abstract", result["item"])
         self.assertNotIn("attachments", result["item"])
         self.assertEqual(result["requested_limit"], 3)
@@ -1965,11 +1988,14 @@ class SearchBehaviorTests(DbTestCase):
             [row["match_type"] for row in result["matches"]],
             ["attachment_chunk", "attachment_chunk", "metadata"],
         )
+        self.assertEqual([row["score"] for row in result["matches"]], [9.0, 8.5, 7.5])
         self.assertNotIn("key", result["matches"][0])
         self.assertNotIn("title", result["matches"][0])
+        self.assertNotIn("itemType", result["matches"][0])
         self.assertEqual(result["matches"][0]["attachment_key"], "ATTACH1")
         self.assertEqual(result["matches"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["matches"][2])
+        self.assertNotIn("attachment_filepath", result["matches"][0])
 
     def test_search_within_item_returns_no_matches_when_limit_is_zero(self):
         self._install_search_state([
@@ -1989,7 +2015,10 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("parent1", "query", limit=0))
 
-        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(
+            result["item"],
+            {"key": "PARENT1", "title": "Example Paper", "itemType": "preprint"},
+        )
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(db._search_state.retriever.calls, [])
@@ -2012,7 +2041,10 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("parent1", "the and", limit=0))
 
-        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(
+            result["item"],
+            {"key": "PARENT1", "title": "Example Paper", "itemType": "preprint"},
+        )
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
@@ -2036,7 +2068,10 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("parent1", "the and", limit=3))
 
-        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(
+            result["item"],
+            {"key": "PARENT1", "title": "Example Paper", "itemType": "preprint"},
+        )
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["requested_limit"], 3)
@@ -2064,7 +2099,10 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(db.search_within_item("parent1", "quantum topology", limit=3))
 
-        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(
+            result["item"],
+            {"key": "PARENT1", "title": "Example Paper", "itemType": "preprint"},
+        )
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["requested_limit"], 3)
@@ -2092,7 +2130,7 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("missing", "query"))
 
         self.assertEqual(result["key"], "MISSING")
-        self.assertEqual(result["item"], {"key": "MISSING", "title": ""})
+        self.assertEqual(result["item"], {"key": "MISSING", "title": "", "itemType": ""})
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["requested_limit"], 5)
         self.assertEqual(result["applied_limit"], 5)
@@ -2184,8 +2222,8 @@ class SearchBehaviorTests(DbTestCase):
 
         result = json.loads(
             db.search_within_item(
-                item_key="parent1",
-                item_keys=["parent2", "parent3"],
+                item_key="",
+                item_keys=["parent1", "parent2", "parent3"],
                 query="query",
                 limit=3,
             )
@@ -2198,6 +2236,7 @@ class SearchBehaviorTests(DbTestCase):
                 {
                     "key": "PARENT1",
                     "title": "First Paper",
+                    "itemType": "preprint",
                     "returned_match_count": 2,
                     "top_score": 7.5,
                     "top_match_type": "attachment_chunk",
@@ -2205,6 +2244,7 @@ class SearchBehaviorTests(DbTestCase):
                 {
                     "key": "PARENT2",
                     "title": "Second Paper",
+                    "itemType": "preprint",
                     "returned_match_count": 1,
                     "top_score": 8.0,
                     "top_match_type": "metadata",
@@ -2212,6 +2252,7 @@ class SearchBehaviorTests(DbTestCase):
                 {
                     "key": "PARENT3",
                     "title": "Third Paper",
+                    "itemType": "preprint",
                     "returned_match_count": 0,
                     "top_score": None,
                     "top_match_type": None,
@@ -2226,6 +2267,7 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual([row["key"] for row in result["matches"]], ["PARENT2", "PARENT1", "PARENT1"])
         self.assertNotIn("title", result["matches"][0])
         self.assertNotIn("title", result["matches"][1])
+        self.assertNotIn("itemType", result["matches"][0])
 
     def test_search_within_item_caps_large_requested_limits_and_reports_metadata(self):
         docs = [

@@ -133,7 +133,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("abstract text truncated to 500 characters", doc)
         self.assertIn("duplicate parent items", normalized_doc.lower())
         self.assertIn("include_attachments", doc)
-        self.assertIn("invalid `collection_key` / `item_type` filters", doc)
+        self.assertIn("invalid `collection_key` / `item_type` filters or empty queries", normalized_doc)
         self.assertIn(
             "values not present in the current search index return no items plus a warning",
             normalized_doc,
@@ -146,16 +146,15 @@ class ServerToolTests(unittest.TestCase):
     def test_search_within_item_delegates_to_db(self):
         with patch.object(server.db, "search_within_item", return_value='{"matches": []}') as db_mock:
             result = server.search_within_item(
-                item_key="ITEM123",
-                item_keys=["ITEM456"],
+                item_keys=["ITEM123", "ITEM456"],
                 query="transformer attention",
                 limit=5,
             )
 
         self.assertEqual(result, '{"matches": []}')
         db_mock.assert_called_once_with(
-            item_key="ITEM123",
-            item_keys=["ITEM456"],
+            item_key="",
+            item_keys=["ITEM123", "ITEM456"],
             query="transformer attention",
             limit=5,
         )
@@ -163,9 +162,12 @@ class ServerToolTests(unittest.TestCase):
     def test_search_within_item_tool_description_mentions_attachment_chunk_fields(self):
         description = _get_registered_tool("search_within_item").description
 
+        self.assertIn("item_keys", description)
+        self.assertIn("score", description)
+        self.assertIn("match_type", description)
+        self.assertIn("itemType", description)
         self.assertIn("attachment_key", description)
         self.assertIn("attachment_title", description)
-        self.assertIn("attachment_filepath", description)
         self.assertIn("chunk_index", description)
         self.assertIn("char_start", description)
         self.assertIn("char_end", description)
@@ -174,6 +176,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("top_match_type", description)
         self.assertIn("requested_limit", description)
         self.assertIn("applied_limit", description)
+        self.assertNotIn("attachment_filepath", description)
 
     def test_response_shape_docstrings_reflect_canonical_keys(self):
         search_within_doc = " ".join(server.search_within_item.__doc__.split())
@@ -183,6 +186,10 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("under `items`", server.search_library.__doc__)
         self.assertIn("`returned_count`", server.search_library.__doc__)
         self.assertIn("`matches`", server.search_within_item.__doc__)
+        self.assertIn("`item_keys`", server.search_within_item.__doc__)
+        self.assertIn("`score`", server.search_within_item.__doc__)
+        self.assertIn("`match_type`", server.search_within_item.__doc__)
+        self.assertIn("`itemType`", server.search_within_item.__doc__)
         self.assertIn("attachment_key", server.search_within_item.__doc__)
         self.assertIn("`returned_match_count`", server.search_within_item.__doc__)
         self.assertIn("`top_score`", server.search_within_item.__doc__)
@@ -199,6 +206,8 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("Single-key requests return JSON", get_item_doc)
         self.assertIn("`item_keys`, `items`, `requested`, `total`", get_item_doc)
         self.assertIn("collections as `{key, name}` pairs", get_item_doc)
+        self.assertNotIn("attachment_filepath", search_within_doc)
+        self.assertIn("privacy-safe attachment metadata", get_item_doc)
 
     def test_get_item_delegates_to_db(self):
         with patch.object(server.db, "get_item", return_value='{"key": "ITEM123"}') as db_mock:
