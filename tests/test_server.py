@@ -66,6 +66,16 @@ class ServerMainTests(unittest.TestCase):
 
 
 class ServerToolTests(unittest.TestCase):
+    def test_search_tool_docstrings_are_distinct(self):
+        self.assertEqual(
+            server.search_library.__doc__.splitlines()[0],
+            "Find which items in your Zotero library match a keyword query.",
+        )
+        self.assertEqual(
+            server.search_within_item.__doc__.splitlines()[0],
+            "Find which passages within one known item match a keyword query.",
+        )
+
     def test_search_library_delegates_to_db(self):
         with patch.object(server.db, "search", return_value='{"results": []}') as db_mock:
             result = server.search_library(
