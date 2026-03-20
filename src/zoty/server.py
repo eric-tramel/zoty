@@ -198,9 +198,10 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
         the full untruncated abstract, title, creators, date, DOI, URL, tags,
         collections, attachment counts, and attachment filepaths. Multi-key
         requests return JSON with `item_keys`, `items`, `requested`, `total`,
-        and optional per-item `errors`. Very large creator lists are
-        summarized to keep the payload bounded. Search results already include
-        most fields, so use this only when the full abstract or full
+        and optional per-item `errors`. Duplicate keys across `item_key` and
+        `item_keys` are deduplicated before fetching. Very large creator lists
+        are summarized to keep the payload bounded. Search results already
+        include most fields, so use this only when the full abstract or full
         attachment records are needed.
     """
     return db.get_item(item_key=item_key, item_keys=item_keys)
@@ -230,7 +231,8 @@ def get_bibtex_and_citation_for_items(
 
     Returns:
         JSON with one entry per requested item, including plain-text citation,
-        plain-text bibliography, and a BibTeX export block.
+        plain-text bibliography, and a BibTeX export block. The response always
+        uses the batch `items` shape, even when only one key is requested.
     """
     return db.get_bibtex_and_citation_for_items(
         item_key=item_key or "",

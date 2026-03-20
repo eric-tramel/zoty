@@ -209,6 +209,7 @@ class ServerToolTests(unittest.TestCase):
         description = _get_registered_tool("get_bibtex_and_citation_for_items").description
 
         self.assertIn("Provide at least one of `item_key` or `item_keys`.", description)
+        self.assertIn("batch `items` shape", description)
 
     def test_get_bibtex_tool_schema_requires_item_key_or_item_keys(self):
         schema = _get_registered_tool("get_bibtex_and_citation_for_items").inputSchema
@@ -251,6 +252,7 @@ class ServerToolTests(unittest.TestCase):
         normalized_description = " ".join(description.split())
 
         self.assertIn("`item_key` and `item_keys` can be combined", normalized_description)
+        self.assertIn("Duplicate keys across `item_key` and `item_keys` are deduplicated", normalized_description)
         self.assertIn("Single-key requests keep the legacy single-item response shape.", normalized_description)
         self.assertIn("`item_keys`, `items`, `requested`, `total`", normalized_description)
 
