@@ -121,16 +121,30 @@ _ARXIV_PDF_LIMITER = _SlidingWindowRateLimiter(
 # Bridge-based Zotero operations (via zoty-bridge plugin)
 # ---------------------------------------------------------------------------
 
+
+def _normalize_bridge_key(key: str) -> str:
+    """Return a canonical Zotero key form for bridge calls."""
+    cleaned = key.strip().upper()
+    if not cleaned:
+        raise ValueError("bridge key must not be empty")
+    return cleaned
+
+
+def _js_string_literal(value: str) -> str:
+    """Return a JavaScript string literal with JSON escaping."""
+    return json.dumps(value)
+
+
 def _attach_pdf_via_rdp(parent_key: str, pdf_path: str) -> dict:
     """Register a downloaded PDF with Zotero via the zoty-bridge plugin."""
-    # Escape backslashes and quotes for JS string literal
-    escaped_path = pdf_path.replace("\\", "\\\\").replace("'", "\\'")
+    parent_key = _normalize_bridge_key(parent_key)
 
     js = f"""(async () => {{
-    let item = await Zotero.Items.getByLibraryAndKey(1, '{parent_key}');
-    if (!item) return JSON.stringify({{error: 'parent item not found', key: '{parent_key}'}});
-    let attachment = await Zotero.Attachments.importFromFile({{
-        file: '{escaped_path}',
+    const parentKey = {_js_string_literal(parent_key)};
+    const item = await Zotero.Items.getByLibraryAndKey(1, parentKey);
+    if (!item) return JSON.stringify({{error: 'parent item not found', key: parentKey}});
+    const attachment = await Zotero.Attachments.importFromFile({{
+        file: {_js_string_literal(pdf_path)},
         parentItemID: item.id
     }});
     return JSON.stringify({{status: 'attached', attachmentID: attachment.id, key: attachment.key}});
@@ -143,10 +157,15 @@ def _attach_pdf_via_rdp(parent_key: str, pdf_path: str) -> dict:
 
 def _add_to_collection_via_rdp(item_key: str, collection_key: str) -> dict:
     """Add an item to a collection via the zoty-bridge plugin."""
+    item_key = _normalize_bridge_key(item_key)
+    collection_key = _normalize_bridge_key(collection_key)
+
     js = f"""(async () => {{
-    let item = await Zotero.Items.getByLibraryAndKey(1, '{item_key}');
-    let collection = await Zotero.Collections.getByLibraryAndKey(1, '{collection_key}');
-    if (!item || !collection) return JSON.stringify({{error: 'not found', itemKey: '{item_key}', collectionKey: '{collection_key}'}});
+    const itemKey = {_js_string_literal(item_key)};
+    const collectionKey = {_js_string_literal(collection_key)};
+    const item = await Zotero.Items.getByLibraryAndKey(1, itemKey);
+    const collection = await Zotero.Collections.getByLibraryAndKey(1, collectionKey);
+    if (!item || !collection) return JSON.stringify({{error: 'not found', itemKey, collectionKey}});
     await collection.addItem(item.id);
     return JSON.stringify({{status: 'added'}});
 }})()"""
