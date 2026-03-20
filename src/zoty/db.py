@@ -39,6 +39,7 @@ _CACHE_CONTENT_TYPES = {
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
+_SEARCH_WITHIN_RESULT_LIMIT_CAP = 25
 _LIST_RESULT_LIMIT_CAP = 100
 _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
@@ -1785,6 +1786,44 @@ def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _multi_item_summaries_from_matches(
+    item_keys: list[str],
+    parents: dict[str, dict[str, Any]],
+    matches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    per_item_stats = {
+        item_key: {
+            "returned_match_count": 0,
+            "top_score": None,
+            "top_match_type": None,
+        }
+        for item_key in item_keys
+    }
+
+    for match in matches:
+        item_key = match.get("key", "")
+        stats = per_item_stats.get(item_key)
+        if stats is None:
+            continue
+
+        stats["returned_match_count"] += 1
+        score = match["score"]
+        current_top_score = stats["top_score"]
+        if current_top_score is None or score > current_top_score:
+            stats["top_score"] = score
+            stats["top_match_type"] = match["match_type"]
+
+    return [
+        {
+            **_item_summary_from_parent(parents[item_key]),
+            "returned_match_count": per_item_stats[item_key]["returned_match_count"],
+            "top_score": per_item_stats[item_key]["top_score"],
+            "top_match_type": per_item_stats[item_key]["top_match_type"],
+        }
+        for item_key in item_keys
+    ]
+
+
 def _result_from_doc(
     parent: dict[str, Any],
     *,
@@ -1826,7 +1865,6 @@ def _search_within_item_response(
     item: dict[str, Any] | None = None,
     item_keys: list[str] | None = None,
     items: list[dict[str, Any]] | None = None,
-    match_counts: dict[str, int] | None = None,
     missing_item_keys: list[str] | None = None,
     error: str | None = None,
     warning: str | None = None,
@@ -1835,12 +1873,15 @@ def _search_within_item_response(
         "matches": matches,
         "query": query,
         "total": len(matches),
-        **_limit_response_metadata(requested_limit, applied_limit, _SEARCH_RESULT_LIMIT_CAP),
+        **_limit_response_metadata(
+            requested_limit,
+            applied_limit,
+            _SEARCH_WITHIN_RESULT_LIMIT_CAP,
+        ),
     }
     if item_keys is not None:
         payload["item_keys"] = list(item_keys)
         payload["items"] = items or []
-        payload["match_counts"] = dict(match_counts or {})
         if missing_item_keys:
             payload["missing_item_keys"] = list(missing_item_keys)
     else:
@@ -2018,7 +2059,7 @@ def search_within_item(
     item_keys: list[str] | None = None,
 ) -> str:
     """BM25 ranked passage search within one or more parent items."""
-    requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_RESULT_LIMIT_CAP)
+    requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_WITHIN_RESULT_LIMIT_CAP)
     requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
     unique_requested_keys: list[str] = []
     for key in requested_keys:
@@ -2050,7 +2091,6 @@ def search_within_item(
                 applied_limit=applied_limit,
                 item_keys=unique_requested_keys,
                 items=[],
-                match_counts={},
                 error="Index is still building, please retry in a moment",
             )
         return _search_within_item_response(
@@ -2074,7 +2114,6 @@ def search_within_item(
                 applied_limit=applied_limit,
                 item_keys=unique_requested_keys,
                 items=[],
-                match_counts={},
                 missing_item_keys=missing_item_keys,
                 error="None of the requested item keys were found in the search index",
             )
@@ -2087,9 +2126,7 @@ def search_within_item(
             error=f"Item {normalized_item_key} was not found in the search index",
         )
 
-    if multi_item:
-        items_summary = [_item_summary_from_parent(state.parents[key]) for key in found_item_keys]
-    else:
+    if not multi_item:
         item_summary = _item_summary_from_parent(state.parents[normalized_item_key])
 
     if state.retriever is None or not state.corpus_docs:
@@ -2106,8 +2143,7 @@ def search_within_item(
                 requested_limit=requested_limit,
                 applied_limit=applied_limit,
                 item_keys=found_item_keys,
-                items=items_summary,
-                match_counts={key: 0 for key in found_item_keys},
+                items=_multi_item_summaries_from_matches(found_item_keys, state.parents, []),
                 missing_item_keys=missing_item_keys,
                 warning=warning,
             )
@@ -2141,8 +2177,7 @@ def search_within_item(
                 requested_limit=requested_limit,
                 applied_limit=applied_limit,
                 item_keys=found_item_keys,
-                items=items_summary,
-                match_counts={key: 0 for key in found_item_keys},
+                items=_multi_item_summaries_from_matches(found_item_keys, state.parents, []),
                 missing_item_keys=missing_item_keys,
                 warning=" ".join(warnings),
             )
@@ -2165,7 +2200,6 @@ def search_within_item(
     max_docs = len(state.corpus_docs)
     batch_size = min(max(applied_limit * 20, 200), max_docs)
     matches: list[dict[str, Any]] = []
-    match_counts = {key: 0 for key in found_item_keys}
     seen_doc_ids: set[str] = set()
     found_item_key_set = set(found_item_keys)
 
@@ -2198,8 +2232,6 @@ def search_within_item(
                 attachments_by_key=attachments_lookup_by_parent.get(parent_key, {}),
                 include_parent_key=multi_item,
             ))
-            if multi_item:
-                match_counts[parent_key] += 1
 
             if len(matches) >= applied_limit:
                 found_enough = True
@@ -2223,8 +2255,11 @@ def search_within_item(
             requested_limit=requested_limit,
             applied_limit=applied_limit,
             item_keys=found_item_keys,
-            items=items_summary,
-            match_counts=match_counts,
+            items=_multi_item_summaries_from_matches(
+                found_item_keys,
+                state.parents,
+                matches[:applied_limit],
+            ),
             missing_item_keys=missing_item_keys,
             warning=warning,
         )

@@ -1606,7 +1606,7 @@ class SearchBehaviorTests(DbTestCase):
         self.assertNotIn("attachments", result["item"])
         self.assertEqual(result["requested_limit"], 3)
         self.assertEqual(result["applied_limit"], 3)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
         self.assertEqual(result["total"], 3)
         self.assertEqual(
@@ -1642,7 +1642,7 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["requested_limit"], 3)
         self.assertEqual(result["applied_limit"], 3)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
         self.assertEqual(db._search_state.retriever.calls, [])
@@ -1670,7 +1670,7 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["requested_limit"], 3)
         self.assertEqual(result["applied_limit"], 3)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
         self.assertNotIn("warning", result)
 
@@ -1697,7 +1697,7 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["requested_limit"], 5)
         self.assertEqual(result["applied_limit"], 5)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
         self.assertIn("was not found", result["error"])
 
@@ -1729,6 +1729,19 @@ class SearchBehaviorTests(DbTestCase):
                 "DOI": "",
                 "url": "",
             },
+            "PARENT3": {
+                "key": "PARENT3",
+                "dateModified": "2026-03-12 10:00:00",
+                "itemType": "preprint",
+                "title": "Third Paper",
+                "abstract": "Third abstract.",
+                "creators": ["Alex Example"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-12",
+                "DOI": "",
+                "url": "",
+            },
         }
         docs = [
             ({
@@ -1743,6 +1756,18 @@ class SearchBehaviorTests(DbTestCase):
                 "text": "query match second",
                 "text_hash": "hash-2",
             }, 8.0),
+            ({
+                "doc_id": "chunk:ATTACH1:0",
+                "parent_key": "PARENT1",
+                "attachment_key": "ATTACH1",
+                "doc_kind": "attachment_chunk",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first attachment",
+                "text_hash": "hash-3",
+            }, 7.5),
             ({
                 "doc_id": "meta:PARENT1",
                 "parent_key": "PARENT1",
@@ -1761,27 +1786,45 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(
             db.search_within_item(
                 item_key="parent1",
-                item_keys=["parent2"],
+                item_keys=["parent2", "parent3"],
                 query="query",
-                limit=2,
+                limit=3,
             )
         )
 
-        self.assertEqual(result["item_keys"], ["PARENT1", "PARENT2"])
+        self.assertEqual(result["item_keys"], ["PARENT1", "PARENT2", "PARENT3"])
         self.assertEqual(
             result["items"],
             [
-                {"key": "PARENT1", "title": "First Paper"},
-                {"key": "PARENT2", "title": "Second Paper"},
+                {
+                    "key": "PARENT1",
+                    "title": "First Paper",
+                    "returned_match_count": 2,
+                    "top_score": 7.5,
+                    "top_match_type": "attachment_chunk",
+                },
+                {
+                    "key": "PARENT2",
+                    "title": "Second Paper",
+                    "returned_match_count": 1,
+                    "top_score": 8.0,
+                    "top_match_type": "metadata",
+                },
+                {
+                    "key": "PARENT3",
+                    "title": "Third Paper",
+                    "returned_match_count": 0,
+                    "top_score": None,
+                    "top_match_type": None,
+                },
             ],
         )
-        self.assertEqual(result["match_counts"], {"PARENT1": 1, "PARENT2": 1})
-        self.assertEqual(result["requested_limit"], 2)
-        self.assertEqual(result["applied_limit"], 2)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["requested_limit"], 3)
+        self.assertEqual(result["applied_limit"], 3)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
-        self.assertEqual(result["total"], 2)
-        self.assertEqual([row["key"] for row in result["matches"]], ["PARENT2", "PARENT1"])
+        self.assertEqual(result["total"], 3)
+        self.assertEqual([row["key"] for row in result["matches"]], ["PARENT2", "PARENT1", "PARENT1"])
         self.assertNotIn("title", result["matches"][0])
         self.assertNotIn("title", result["matches"][1])
 
@@ -1807,11 +1850,11 @@ class SearchBehaviorTests(DbTestCase):
             result = json.loads(db.search_within_item("parent1", "query", limit=999))
 
         self.assertEqual(result["requested_limit"], 999)
-        self.assertEqual(result["applied_limit"], db._SEARCH_RESULT_LIMIT_CAP)
-        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["applied_limit"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertTrue(result["limit_capped"])
-        self.assertEqual(result["total"], db._SEARCH_RESULT_LIMIT_CAP)
-        self.assertEqual(len(result["matches"]), db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["total"], db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
+        self.assertEqual(len(result["matches"]), db._SEARCH_WITHIN_RESULT_LIMIT_CAP)
         self.assertEqual(db._search_state.retriever.calls[0]["k"], 500)
 
 
