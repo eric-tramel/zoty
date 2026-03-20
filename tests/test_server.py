@@ -70,9 +70,9 @@ class ServerMainTests(unittest.TestCase):
 
 
 class ServerToolTests(unittest.TestCase):
-    def test_get_citation_entries_delegates_to_db(self):
-        with patch.object(server.db, "get_citation_entries", return_value='{"items": []}') as db_mock:
-            result = server.get_citation_entries(
+    def test_get_bibtex_and_citation_for_items_delegates_to_db(self):
+        with patch.object(server.db, "get_bibtex_and_citation_for_items", return_value='{"items": []}') as db_mock:
+            result = server.get_bibtex_and_citation_for_items(
                 item_key="ITEM123",
                 item_keys=["ITEM456"],
                 style="apa",

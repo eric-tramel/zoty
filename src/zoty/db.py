@@ -347,13 +347,13 @@ def get_item(item_key: str) -> str:
     return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
 
 
-def get_citation_entries(
+def get_bibtex_and_citation_for_items(
     item_key: str = "",
     item_keys: list[str] | None = None,
     style: str = "chicago-note-bibliography",
     locale: str = "en-US",
 ) -> str:
-    """Return citation, bibliography, and BibTeX output for one or more items."""
+    """Return BibTeX plus formatted citation/bibliography text for one or more items."""
     requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
     if not requested_keys:
         return json.dumps({

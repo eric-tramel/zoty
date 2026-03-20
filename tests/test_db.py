@@ -166,7 +166,7 @@ class CitationEntryTests(unittest.TestCase):
 
         self.assertEqual(result, ["ITEM123", "ITEM456", "ITEM789"])
 
-    def test_get_citation_entries_returns_single_item_exports(self):
+    def test_get_bibtex_and_citation_for_items_returns_single_item_exports(self):
         zot = Mock()
 
         def item_side_effect(item_key, **kwargs):
@@ -186,7 +186,7 @@ class CitationEntryTests(unittest.TestCase):
 
         with patch("zoty.db._get_zot", return_value=zot):
             result = json.loads(
-                db.get_citation_entries(
+                db.get_bibtex_and_citation_for_items(
                     item_key="item123",
                     style="apa",
                     locale="fr-FR",
@@ -209,7 +209,7 @@ class CitationEntryTests(unittest.TestCase):
             ],
         )
 
-    def test_get_citation_entries_returns_multiple_items_and_partial_errors(self):
+    def test_get_bibtex_and_citation_for_items_returns_multiple_items_and_partial_errors(self):
         zot = Mock()
 
         def item_side_effect(item_key, **kwargs):
@@ -229,7 +229,7 @@ class CitationEntryTests(unittest.TestCase):
 
         with patch("zoty.db._get_zot", return_value=zot):
             result = json.loads(
-                db.get_citation_entries(
+                db.get_bibtex_and_citation_for_items(
                     item_keys=["good1", "badkey", "good2"],
                 )
             )
@@ -263,8 +263,8 @@ class CitationEntryTests(unittest.TestCase):
         self.assertEqual(result["requested"], 3)
         self.assertEqual(result["total"], 2)
 
-    def test_get_citation_entries_requires_at_least_one_key(self):
-        result = json.loads(db.get_citation_entries())
+    def test_get_bibtex_and_citation_for_items_requires_at_least_one_key(self):
+        result = json.loads(db.get_bibtex_and_citation_for_items())
 
         self.assertEqual(
             result,
