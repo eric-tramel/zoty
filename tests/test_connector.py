@@ -2,6 +2,7 @@ from contextlib import closing
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -69,6 +70,42 @@ class ArxivRateLimiterTests(unittest.TestCase):
 
         self.assertEqual(starts, [("fail", 0.0), ("success", 3.2)])
         self.assertEqual(clock.sleeps, [3.0])
+
+    def test_serialized_rate_limiter_releases_lock_during_call(self):
+        limiter = connector._SerializedRateLimiter(min_interval=0.0)
+        started = threading.Event()
+        release = threading.Event()
+        done = threading.Event()
+        errors = []
+
+        def blocking_call():
+            started.set()
+            release.wait(timeout=1.0)
+            return "ok"
+
+        def worker():
+            try:
+                limiter.run(blocking_call)
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(exc)
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        self.assertTrue(started.wait(timeout=1.0))
+
+        # If run() holds _lock during func(), this acquire times out.
+        acquired = limiter._lock.acquire(timeout=0.1)
+        if acquired:
+            limiter._lock.release()
+
+        release.set()
+        self.assertTrue(done.wait(timeout=1.0))
+        thread.join(timeout=1.0)
+
+        self.assertTrue(acquired)
+        self.assertEqual(errors, [])
 
     def test_sliding_window_rate_limiter_allows_burst_then_waits(self):
         clock = FakeClock()
