@@ -30,7 +30,8 @@ def search_library(
 
     Returns:
         JSON with ranked search results including title, creators, date, score,
-        metadata abstract, optional plain-text snippets, and attachment filepaths.
+        metadata abstract, optional plain-text snippets, attachment filepaths,
+        and limit metadata describing any applied cap.
     """
     return db.search(
         query,

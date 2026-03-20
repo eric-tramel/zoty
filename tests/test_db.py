@@ -23,8 +23,17 @@ class FakeMatrix:
 class FakeRetriever:
     def __init__(self, rows):
         self._rows = rows
+        self.calls = []
 
     def retrieve(self, query_tokens, corpus=None, k=10, show_progress=False):
+        self.calls.append(
+            {
+                "query_tokens": query_tokens,
+                "corpus": corpus,
+                "k": k,
+                "show_progress": show_progress,
+            }
+        )
         pairs = self._rows[:k]
         return (
             FakeMatrix([[doc for doc, _score in pairs]]),
@@ -464,6 +473,54 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("query", collection_key="KEEP", item_type="preprint"))
 
         self.assertEqual(result["total"], 1)
+        self.assertEqual(result["results"][0]["key"], "PARENT1")
+
+    def test_search_caps_large_requested_limits_and_reports_metadata(self):
+        parents = {}
+        docs = []
+        for index in range(600):
+            parent_key = f"PARENT{index + 1}"
+            parents[parent_key] = {
+                "key": parent_key,
+                "dateModified": f"2026-03-{(index % 28) + 1:02d} 10:00:00",
+                "itemType": "preprint",
+                "title": f"Paper {index + 1}",
+                "abstract": f"Abstract {index + 1}.",
+                "creators": [f"Author {index + 1}"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": f"2026-03-{(index % 28) + 1:02d}",
+                "DOI": "",
+                "url": "",
+            }
+            docs.append(
+                (
+                    {
+                        "doc_id": f"meta:{parent_key}",
+                        "parent_key": parent_key,
+                        "attachment_key": "",
+                        "doc_kind": "metadata",
+                        "chunk_index": 0,
+                        "char_start": 0,
+                        "char_end": 40,
+                        "token_count": 4,
+                        "text": f"query match {index + 1}",
+                        "text_hash": f"hash-{index + 1}",
+                    },
+                    float(1000 - index),
+                )
+            )
+        self._install_search_state(docs, parents=parents)
+
+        result = json.loads(db.search("query", limit=1000))
+
+        self.assertEqual(result["requested_limit"], 1000)
+        self.assertEqual(result["applied_limit"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertTrue(result["limit_capped"])
+        self.assertEqual(result["total"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(len(result["results"]), db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
         self.assertEqual(result["results"][0]["key"], "PARENT1")
 
     def test_search_within_item_returns_multiple_ranked_matches_for_one_parent(self):
