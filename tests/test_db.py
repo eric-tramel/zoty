@@ -226,15 +226,50 @@ class AttachmentPathsTests(DbTestCase):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item(""))
 
-        self.assertEqual(result, {"error": "Provide item_key"})
+        self.assertEqual(result["error"], "Provide item_key")
+        self.assertEqual(result["key"], "")
+        self.assertEqual(result["itemType"], "")
+        self.assertEqual(result["creators"], [])
+        self.assertEqual(result["tags"], [])
+        self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachments"], [])
         get_zot_mock.assert_not_called()
 
     def test_get_item_rejects_whitespace_only_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item("   "))
 
-        self.assertEqual(result, {"error": "Provide item_key"})
+        self.assertEqual(result["error"], "Provide item_key")
+        self.assertEqual(result["key"], "")
+        self.assertEqual(result["itemType"], "")
+        self.assertEqual(result["creators"], [])
+        self.assertEqual(result["tags"], [])
+        self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachments"], [])
         get_zot_mock.assert_not_called()
+
+    def test_get_item_returns_structured_error_skeleton_for_fetch_failure(self):
+        zot = Mock()
+        zot.item.side_effect = RuntimeError("boom")
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(result["key"], "PARENT1")
+        self.assertEqual(result["itemType"], "")
+        self.assertEqual(result["creators"], [])
+        self.assertEqual(result["tags"], [])
+        self.assertEqual(result["collections"], [])
+        self.assertEqual(result["attachments"], [])
+        self.assertIn("Failed to fetch item PARENT1: boom", result["error"])
+
+    def test_list_collections_returns_structured_error_skeleton_for_fetch_failure(self):
+        with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
+            result = json.loads(db.list_collections())
+
+        self.assertEqual(result["collections"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertIn("Failed to fetch collections: boom", result["error"])
 
     def test_search_includes_attachment_count(self):
         attachment_doc = {
@@ -561,6 +596,14 @@ class RecentItemsTests(DbTestCase):
                 "... and 3 more",
             ],
         )
+
+    def test_get_recent_items_returns_structured_error_skeleton_for_fetch_failure(self):
+        with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertIn("Failed to fetch recent items: boom", result["error"])
 
 
 class ParentRecordDateNormalizationTests(DbTestCase):

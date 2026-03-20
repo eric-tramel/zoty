@@ -257,6 +257,24 @@ def _parse_rdp_result(bridge_response: dict) -> dict:
     return bridge_response
 
 
+def _add_paper_error_payload(error: str, *, collection_key: str = "") -> dict[str, object]:
+    """Return the add_paper failure shape with empty success fields."""
+    return {
+        "status": "error",
+        "title": "",
+        "creators": [],
+        "date": "",
+        "itemType": "",
+        "DOI": "",
+        "url": "",
+        "abstract": "",
+        "pdf_attached": False,
+        "collection_added": False,
+        "collection_key": collection_key,
+        "error": error,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -649,7 +667,7 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
     (the metadata item and downloaded PDF are still preserved).
     """
     if not arxiv_id and not doi:
-        return json.dumps({"error": "Provide at least one of arxiv_id or doi"})
+        return json.dumps(_add_paper_error_payload("Provide at least one of arxiv_id or doi", collection_key=collection_key))
 
     try:
         existing_key, existing_title = _find_existing_item_in_collection(
@@ -786,9 +804,19 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
     except urllib.error.URLError as e:
         source = "arXiv" if arxiv_id else "CrossRef"
         if "Connection refused" in str(e) or "localhost" in str(e):
-            return json.dumps({"error": "Cannot reach Zotero connector at localhost:23119. Is Zotero running?"})
-        return json.dumps({"error": f"Failed to fetch metadata from {source}: {e}"})
+            return json.dumps(
+                _add_paper_error_payload(
+                    "Cannot reach Zotero connector at localhost:23119. Is Zotero running?",
+                    collection_key=collection_key,
+                )
+            )
+        return json.dumps(
+            _add_paper_error_payload(
+                f"Failed to fetch metadata from {source}: {e}",
+                collection_key=collection_key,
+            )
+        )
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps(_add_paper_error_payload(str(e), collection_key=collection_key))
     except Exception as e:
-        return json.dumps({"error": f"Failed to add paper: {e}"})
+        return json.dumps(_add_paper_error_payload(f"Failed to add paper: {e}", collection_key=collection_key))
