@@ -1,3 +1,4 @@
+import io
 import json
 import sqlite3
 import tempfile
@@ -189,6 +190,42 @@ class AttachmentPathsTests(DbTestCase):
                 }
             ],
         )
+
+    def test_get_item_attachments_by_parent_logs_and_falls_back_on_failure(self):
+        stderr = io.StringIO()
+
+        with (
+            patch("zoty.db._open_zotero_db", side_effect=RuntimeError("boom")),
+            patch("sys.stderr", new=stderr),
+        ):
+            attachments_by_parent = db._get_item_attachments_by_parent(["PARENT1"])
+
+        self.assertEqual(attachments_by_parent, {"PARENT1": []})
+        self.assertIn("zoty: failed to load attachment metadata for PARENT1: boom", stderr.getvalue())
+
+    def test_get_item_attachment_count_logs_and_falls_back_on_failure(self):
+        stderr = io.StringIO()
+
+        with (
+            patch("zoty.db._open_zotero_db", side_effect=RuntimeError("boom")),
+            patch("sys.stderr", new=stderr),
+        ):
+            count = db._get_item_attachment_count("PARENT1")
+
+        self.assertEqual(count, 0)
+        self.assertIn("zoty: failed to count attachments for PARENT1: boom", stderr.getvalue())
+
+    def test_get_item_attachment_counts_logs_and_falls_back_on_failure(self):
+        stderr = io.StringIO()
+
+        with (
+            patch("zoty.db._open_zotero_db", side_effect=RuntimeError("boom")),
+            patch("sys.stderr", new=stderr),
+        ):
+            counts = db._get_item_attachment_counts(["PARENT1", " PARENT2 ", "PARENT1"])
+
+        self.assertEqual(counts, {"PARENT1": 0, "PARENT2": 0})
+        self.assertIn("zoty: failed to count attachments for PARENT1, PARENT2: boom", stderr.getvalue())
 
     def test_format_link_mode_maps_known_and_unknown_values(self):
         self.assertEqual(db._format_link_mode(0), "imported_file")
