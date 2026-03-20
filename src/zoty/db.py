@@ -1762,20 +1762,61 @@ def list_collections() -> str:
 def list_collection_items(collection_key: str, limit: int = 50) -> str:
     """Return items in a specific collection."""
     limit = max(1, limit)
+    normalized_collection_key = collection_key.strip().upper()
+    if not normalized_collection_key:
+        return json.dumps({
+            "collection_key": "",
+            "collection_found": False,
+            "items": [],
+            "total": 0,
+            "error": "Provide collection_key",
+        })
+
     try:
         zot = _get_zot()
-        items = zot.collection_items(collection_key, limit=limit)
+        collections = zot.collections()
+        collection_found = any(
+            collection.get("data", {}).get("key", "").upper() == normalized_collection_key
+            for collection in collections
+        )
+        if not collection_found:
+            return json.dumps({
+                "collection_key": normalized_collection_key,
+                "collection_found": False,
+                "items": [],
+                "total": 0,
+                "error": f"Collection {normalized_collection_key} was not found",
+            })
+        items = zot.collection_items(normalized_collection_key, limit=limit)
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch collection items: {exc}"})
+        return json.dumps({
+            "collection_key": normalized_collection_key,
+            "collection_found": False,
+            "items": [],
+            "total": 0,
+            "error": f"Failed to fetch collection items: {exc}",
+        })
 
     result = []
     for item in items:
         data = item.get("data", {})
         if data.get("itemType") in ("attachment", "note"):
             continue
+        item_collections = {
+            key.upper()
+            for key in data.get("collections", [])
+            if isinstance(key, str)
+        }
+        if normalized_collection_key not in item_collections:
+            continue
         result.append(_item_to_dict(item, truncate_abstract=500))
 
-    return json.dumps({"items": result, "total": len(result)})
+    return json.dumps({
+        "collection_key": normalized_collection_key,
+        "collection_found": True,
+        "items": result,
+        "total": len(result),
+    })
 
 
 def get_item(item_key: str) -> str:
