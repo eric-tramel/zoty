@@ -709,10 +709,10 @@ class CollectionItemTests(DbTestCase):
         self.assertFalse(result["collection_found"])
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
-        self.assertEqual(result["requested_limit"], 50)
+        self.assertEqual(result["requested_limit"], 25)
         self.assertEqual(result["applied_limit"], db._LIST_RESULT_LIMIT_CAP)
         self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
-        self.assertTrue(result["limit_capped"])
+        self.assertFalse(result["limit_capped"])
         self.assertIn("not found", result["error"])
         zot.collection_items.assert_not_called()
 
@@ -1433,8 +1433,73 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("shared"))
 
         self.assertEqual(result["total"], 2)
+        self.assertEqual(result["returned_count"], 2)
         self.assertEqual([row["key"] for row in result["items"]], ["PARENT1", "PARENT2"])
         self.assertEqual(result["items"][0]["score"], 9.0)
+
+    def test_search_deduplicates_duplicate_papers_and_prefers_richer_item(self):
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Duplicate Paper",
+                "abstract": "Duplicate abstract.",
+                "creators": ["Jane Example"],
+                "collections": [],
+                "tags": [],
+                "date": "2026-03-10",
+                "DOI": "10.1000/duplicate",
+                "url": "https://example.org/duplicate",
+            },
+            "PARENT2": {
+                "key": "PARENT2",
+                "dateModified": "2026-03-11 10:00:00",
+                "itemType": "preprint",
+                "title": "Duplicate Paper",
+                "abstract": "Duplicate abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2026-03-10",
+                "DOI": "10.1000/duplicate",
+                "url": "https://example.org/duplicate",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 30,
+                "token_count": 4,
+                "text": "query match duplicate paper",
+                "text_hash": "hash-1",
+            }, 9.0),
+            ({
+                "doc_id": "meta:PARENT2",
+                "parent_key": "PARENT2",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 30,
+                "token_count": 4,
+                "text": "query match duplicate paper",
+                "text_hash": "hash-2",
+            }, 8.0),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        result = json.loads(db.search("query"))
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["returned_count"], 1)
+        self.assertEqual([row["key"] for row in result["items"]], ["PARENT2"])
+        self.assertEqual(result["items"][0]["collections"], ["COLL123"])
 
     def test_collection_and_item_type_filters_apply_at_parent_level(self):
         parents = {
@@ -1591,12 +1656,13 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["applied_limit"], db._SEARCH_RESULT_LIMIT_CAP)
         self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
         self.assertTrue(result["limit_capped"])
-        self.assertEqual(result["total"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertEqual(result["total"], 600)
+        self.assertEqual(result["returned_count"], db._SEARCH_RESULT_LIMIT_CAP)
         self.assertEqual(len(result["items"]), db._SEARCH_RESULT_LIMIT_CAP)
-        self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
+        self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500, 600])
         self.assertEqual(result["items"][0]["key"], "PARENT1")
 
-    def test_search_preserves_zero_requested_limit_without_retrieval(self):
+    def test_search_preserves_zero_requested_limit_while_reporting_total_matches(self):
         self._install_search_state([
             ({
                 "doc_id": "meta:PARENT1",
@@ -1615,12 +1681,13 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search("query", limit=0))
 
         self.assertEqual(result["items"], [])
-        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["returned_count"], 0)
         self.assertEqual(result["requested_limit"], 0)
         self.assertEqual(result["applied_limit"], 0)
         self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
         self.assertFalse(result["limit_capped"])
-        self.assertEqual(db._search_state.retriever.calls, [])
+        self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [1])
 
     def test_search_preserves_zero_requested_limit_while_returning_empty_query_warning(self):
         self._install_search_state([
@@ -1642,6 +1709,7 @@ class SearchBehaviorTests(DbTestCase):
 
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["returned_count"], 0)
         self.assertEqual(result["requested_limit"], 0)
         self.assertEqual(result["applied_limit"], 0)
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
@@ -1667,6 +1735,7 @@ class SearchBehaviorTests(DbTestCase):
 
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["returned_count"], 0)
         self.assertEqual(result["warning"], db._EMPTY_QUERY_WARNING)
         self.assertEqual(db._search_state.retriever.calls, [])
 
@@ -1690,6 +1759,7 @@ class SearchBehaviorTests(DbTestCase):
 
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["returned_count"], 0)
         self.assertNotIn("warning", result)
 
     def test_search_within_item_returns_multiple_ranked_matches_for_one_parent(self):

@@ -81,9 +81,9 @@ def search_library(
             items plus a warning instead of silently filtering everything
             out.
         limit: Requested results to return (default: 10, capped at 25).
-            `limit=0` returns no items without retrieval, and the response
-            includes `requested_limit`, `applied_limit`, `limit_cap`, and
-            `limit_capped` so callers can detect clamping.
+            `limit=0` returns no items, while the response still reports
+            `total` and `returned_count` so callers can see how many results
+            matched and how many were actually included under `items`.
         include_attachments: Include resolved attachment metadata in each
             returned item. Defaults to `False`; otherwise `attachment_count`
             is still present without the heavier attachment array.
@@ -94,7 +94,10 @@ def search_library(
         `attachment_count`, `collections` as `{key, name}` pairs, optional `attachments` when
         `include_attachments=True`, optional plain-text snippets, warnings for
         invalid `collection_key` / `item_type` filters or empty queries, and
-        limit metadata.
+        limit metadata. Duplicate parent items that represent the same paper
+        are collapsed before limiting, preferring the richer record when
+        duplicates exist. `total` reports the deduplicated match count and
+        `returned_count` reports how many items were actually returned.
     """
     return db.search(
         query,
@@ -160,12 +163,12 @@ def list_collections() -> str:
 
 
 @mcp_server.tool()
-def list_collection_items(collection_key: str, limit: int = 50) -> str:
+def list_collection_items(collection_key: str, limit: int = 25) -> str:
     """List items in a specific Zotero collection.
 
     Args:
         collection_key: The Zotero collection key (from list_collections)
-        limit: Requested items to return (default: 50, capped at 25).
+        limit: Requested items to return (default: 25, capped at 25).
             `limit=0` returns an empty result set, and the response includes
             `requested_limit`, `applied_limit`, `limit_cap`, and
             `limit_capped` so callers can detect clamping.
@@ -298,7 +301,9 @@ def _augment_tool_schemas() -> None:
         search_tool.description = (
             f"{search_tool.description}\n\n"
             f"Canonical `item_type` values: {', '.join(f'`{item_type}`' for item_type in _SEARCH_LIBRARY_ITEM_TYPES)}. "
-            "If the requested value is not present in the current search index, the response returns no items and a warning."
+            "If the requested value is not present in the current search index, the response returns no items and a warning. "
+            "Duplicate parent items that represent the same paper are collapsed before limiting, preferring the richer record when duplicates exist. "
+            "Response metadata includes `returned_count` for the items included under `items` and `total` for the deduplicated match count."
         )
 
         search_properties = search_tool.parameters.setdefault("properties", {})
