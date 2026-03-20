@@ -162,6 +162,32 @@ class ArxivRateLimiterTests(unittest.TestCase):
         )
 
 
+class DownloadPdfSecurityTests(unittest.TestCase):
+    def test_download_pdf_uses_mkstemp_and_closes_fd(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            temp_pdf = tmpdir_path / "download.pdf"
+
+            def fake_download(_url, path):
+                Path(path).write_bytes(b"x" * 2000)
+
+            with (
+                patch("zoty.connector.tempfile.mkstemp", return_value=(17, str(temp_pdf))) as mkstemp_mock,
+                patch("zoty.connector.tempfile.mktemp", side_effect=AssertionError("mktemp should not be used")),
+                patch("zoty.connector.os.close") as close_mock,
+                patch("zoty.connector._download_with_rate_limit", side_effect=fake_download),
+                patch("zoty.connector._zotero_key", return_value="ATTACH1"),
+                patch("zoty.connector._ZOTERO_STORAGE", tmpdir_path),
+            ):
+                result = connector._download_pdf("https://example.org/paper.pdf", "paper.pdf")
+                self.assertEqual(result[0], "ATTACH1")
+                self.assertEqual(result[2], 2000)
+                self.assertEqual(result[1], tmpdir_path / "ATTACH1" / "paper.pdf")
+                self.assertTrue(result[1].exists())
+                mkstemp_mock.assert_called_once_with(suffix=".pdf")
+                close_mock.assert_called_once_with(17)
+
+
 class CollectionAssignmentRetryTests(unittest.TestCase):
     @patch("zoty.connector.time.sleep", autospec=True)
     def test_retries_bridge_http_400(self, sleep_mock):
