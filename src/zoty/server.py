@@ -20,7 +20,9 @@ def search_library(
     item_type: str = "",
     limit: int = 10,
 ) -> str:
-    """BM25 ranked search over title, abstract, and indexed attachment full text.
+    """Find which items in your Zotero library match a keyword query.
+
+    Uses BM25 ranking over title, abstract, and indexed attachment full text.
 
     Args:
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
@@ -45,7 +47,9 @@ def search_library(
 
 @mcp_server.tool()
 def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
-    """BM25 ranked passage search within one Zotero item.
+    """Find which passages within one known item match a keyword query.
+
+    Use after `search_library` to drill into a specific paper.
 
     Args:
         item_key: Zotero parent item key to search within
