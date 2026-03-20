@@ -37,8 +37,6 @@ _CACHE_CONTENT_TYPES = {
 }
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
-
-
 @dataclass
 class _ParentRecord:
     parent_key: str
@@ -263,6 +261,27 @@ def _get_item_attachments(item_key: str) -> list[dict]:
         })
 
     return attachments
+
+
+def _get_item_attachment_count(item_key: str) -> int:
+    """Return the number of attachments linked to one parent item."""
+    key = item_key.strip()
+    if not key:
+        return 0
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS count
+                   FROM itemAttachments ia
+                   JOIN items parent ON parent.itemID = ia.parentItemID
+                   WHERE parent.key = ?""",
+                (key,),
+            ).fetchone()
+    except Exception:
+        return 0
+
+    return int(row["count"]) if row else 0
 
 
 def _item_to_dict(
@@ -1452,7 +1471,7 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachments": _get_item_attachments(parent["key"]),
+        "attachment_count": _get_item_attachment_count(parent["key"]),
         "score": round(score, 4),
     }
 

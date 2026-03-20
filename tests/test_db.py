@@ -185,7 +185,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
 
-    def test_search_includes_attachment_filepaths(self):
+    def test_search_includes_attachment_count(self):
         attachment_doc = {
             "doc_id": "chunk:ATTACH1:0",
             "parent_key": "PARENT1",
@@ -204,10 +204,8 @@ class AttachmentPathsTests(DbTestCase):
 
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["results"][0]["key"], "PARENT1")
-        self.assertEqual(
-            result["results"][0]["attachments"][0]["filepath"],
-            str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
-        )
+        self.assertEqual(result["results"][0]["attachment_count"], 1)
+        self.assertNotIn("attachments", result["results"][0])
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
 
 
