@@ -79,6 +79,12 @@ class DbTestCase(unittest.TestCase):
             }
         }
 
+    def _creator_dicts(self, count: int) -> list[dict[str, str]]:
+        return [
+            {"firstName": f"Author{index + 1}", "lastName": "Example"}
+            for index in range(count)
+        ]
+
     def _install_search_state(self, docs, *, parents=None):
         if parents is None:
             parents = {
@@ -193,6 +199,19 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["key"], "PARENT1")
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
+
+    def test_get_item_preserves_full_creator_list(self):
+        zot = Mock()
+        item = self._paper_item()
+        item["data"]["creators"] = self._creator_dicts(7)
+        zot.item.return_value = item
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(len(result["creators"]), 7)
+        self.assertEqual(result["creators"][0], "Author1 Example")
+        self.assertEqual(result["creators"][-1], "Author7 Example")
 
     def test_get_item_rejects_empty_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
@@ -309,6 +328,67 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual(result["items"][0]["title"], "First Paper")
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
 
+    def test_list_collection_items_truncates_long_creator_lists(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+        zot.collection_items.return_value = [
+            {
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "preprint",
+                    "title": "First Paper",
+                    "creators": self._creator_dicts(7),
+                    "date": "2026-03-10",
+                    "DOI": "10.1000/one",
+                    "url": "https://example.org/one",
+                    "tags": [{"tag": "chemistry"}],
+                    "collections": ["COLL123"],
+                    "abstractNote": "First abstract.",
+                }
+            },
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=5))
+
+        self.assertEqual(
+            result["items"][0]["creators"],
+            [
+                "Author1 Example",
+                "Author2 Example",
+                "Author3 Example",
+                "Author4 Example",
+                "Author5 Example",
+                "... and 2 more",
+            ],
+        )
+
+
+class RecentItemsTests(DbTestCase):
+    def test_get_recent_items_truncates_long_creator_lists(self):
+        zot = Mock()
+        item = self._paper_item()
+        item["data"]["creators"] = self._creator_dicts(8)
+        zot.items.return_value = [item]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(
+            result["items"][0]["creators"],
+            [
+                "Author1 Example",
+                "Author2 Example",
+                "Author3 Example",
+                "Author4 Example",
+                "Author5 Example",
+                "... and 3 more",
+            ],
+        )
+
 
 class SearchBehaviorTests(DbTestCase):
     def setUp(self):
@@ -405,6 +485,50 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["results"][0]["key"], "PARENT1")
         self.assertIn("meatpotatoes", result["results"][0]["snippet"].lower())
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+
+    def test_search_truncates_long_creator_lists(self):
+        attachment_doc = {
+            "doc_id": "chunk:ATTACH1:0",
+            "parent_key": "PARENT1",
+            "attachment_key": "ATTACH1",
+            "doc_kind": "attachment_chunk",
+            "chunk_index": 0,
+            "char_start": 0,
+            "char_end": 80,
+            "token_count": 12,
+            "text": "This body text contains meatpotatoes evidence deep in the paper body.",
+            "text_hash": "hash-body",
+        }
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Example Paper",
+                "abstract": "Example abstract.",
+                "creators": [f"Author {index + 1}" for index in range(7)],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2026-03-10",
+                "DOI": "10.1000/example",
+                "url": "https://example.org/paper",
+            }
+        }
+        self._install_search_state([(attachment_doc, 7.25)], parents=parents)
+
+        result = json.loads(db.search("meatpotatoes"))
+
+        self.assertEqual(
+            result["results"][0]["creators"],
+            [
+                "Author 1",
+                "Author 2",
+                "Author 3",
+                "Author 4",
+                "Author 5",
+                "... and 2 more",
+            ],
+        )
 
     def test_metadata_query_uses_abstract_snippet_without_attachment_key(self):
         metadata_doc = {
@@ -706,6 +830,52 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["results"][0]["attachment_key"], "ATTACH1")
         self.assertEqual(result["results"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["results"][2])
+
+    def test_search_within_item_truncates_item_creator_list(self):
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "First Paper",
+                "abstract": "First abstract with metadata match.",
+                "creators": [f"Author {index + 1}" for index in range(8)],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-10",
+                "DOI": "",
+                "url": "",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 30,
+                "token_count": 4,
+                "text": "query match metadata",
+                "text_hash": "hash-1",
+            }, 7.5),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        result = json.loads(db.search_within_item("parent1", "query", limit=3))
+
+        self.assertEqual(
+            result["item"]["creators"],
+            [
+                "Author 1",
+                "Author 2",
+                "Author 3",
+                "Author 4",
+                "Author 5",
+                "... and 3 more",
+            ],
+        )
 
     def test_search_within_item_returns_error_for_unknown_item(self):
         self._install_search_state([
