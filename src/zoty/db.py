@@ -1912,7 +1912,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
     result = []
     for item in items:
         data = item.get("data", {})
-        if data.get("itemType") in ("attachment", "note"):
+        if data.get("itemType") in _SKIP_TYPES:
             continue
         item_collections = {
             key.upper()
