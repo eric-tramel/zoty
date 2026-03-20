@@ -37,8 +37,6 @@ _CACHE_CONTENT_TYPES = {
 }
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
-
-
 @dataclass
 class _ParentRecord:
     parent_key: str
@@ -265,6 +263,27 @@ def _get_item_attachments(item_key: str) -> list[dict]:
     return attachments
 
 
+def _get_item_attachment_count(item_key: str) -> int:
+    """Return the number of attachments linked to one parent item."""
+    key = item_key.strip()
+    if not key:
+        return 0
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS count
+                   FROM itemAttachments ia
+                   JOIN items parent ON parent.itemID = ia.parentItemID
+                   WHERE parent.key = ?""",
+                (key,),
+            ).fetchone()
+    except Exception:
+        return 0
+
+    return int(row["count"]) if row else 0
+
+
 def _item_to_dict(
     item: dict,
     truncate_abstract: int = 0,
@@ -320,28 +339,40 @@ def _xhtml_to_text(fragment: str) -> str:
     return " ".join(html.unescape(text).split())
 
 
-def _fetch_item_export(
+def _fetch_item_exports(
     item_key: str,
     *,
-    content: str,
     style: str,
     locale: str,
-) -> str:
-    """Fetch one formatted export block for a Zotero item."""
+) -> dict[str, str]:
+    """Fetch formatted citation, bibliography, and BibTeX blocks for one item."""
     zot = _get_zot()
     exported = zot.item(
         item_key,
-        format="atom",
-        content=content,
+        format="json",
+        include="bib,citation,bibtex",
         style=style,
         locale=locale,
     )
 
-    if isinstance(exported, list):
-        return exported[0] if exported else ""
-    if isinstance(exported, str):
-        return exported
-    return ""
+    if not isinstance(exported, dict):
+        raise TypeError(f"Unexpected export payload: {type(exported).__name__}")
+
+    data = exported.get("data", {}) if isinstance(exported.get("data"), dict) else {}
+
+    def _get_export_block(name: str) -> str:
+        value = exported.get(name, data.get(name, ""))
+        if isinstance(value, list):
+            return value[0] if value else ""
+        if isinstance(value, str):
+            return value
+        return ""
+
+    return {
+        "citation": _get_export_block("citation"),
+        "bibliography": _get_export_block("bib"),
+        "bibtex": _get_export_block("bibtex"),
+    }
 
 
 def _ensure_sidecar_layout() -> None:
@@ -1452,7 +1483,7 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachments": _get_item_attachments(parent["key"]),
+        "attachment_count": _get_item_attachment_count(parent["key"]),
         "score": round(score, 4),
     }
 
@@ -1762,20 +1793,61 @@ def list_collections() -> str:
 def list_collection_items(collection_key: str, limit: int = 50) -> str:
     """Return items in a specific collection."""
     limit = max(1, limit)
+    normalized_collection_key = collection_key.strip().upper()
+    if not normalized_collection_key:
+        return json.dumps({
+            "collection_key": "",
+            "collection_found": False,
+            "items": [],
+            "total": 0,
+            "error": "Provide collection_key",
+        })
+
     try:
         zot = _get_zot()
-        items = zot.collection_items(collection_key, limit=limit)
+        collections = zot.collections()
+        collection_found = any(
+            collection.get("data", {}).get("key", "").upper() == normalized_collection_key
+            for collection in collections
+        )
+        if not collection_found:
+            return json.dumps({
+                "collection_key": normalized_collection_key,
+                "collection_found": False,
+                "items": [],
+                "total": 0,
+                "error": f"Collection {normalized_collection_key} was not found",
+            })
+        items = zot.collection_items(normalized_collection_key, limit=limit)
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch collection items: {exc}"})
+        return json.dumps({
+            "collection_key": normalized_collection_key,
+            "collection_found": False,
+            "items": [],
+            "total": 0,
+            "error": f"Failed to fetch collection items: {exc}",
+        })
 
     result = []
     for item in items:
         data = item.get("data", {})
         if data.get("itemType") in ("attachment", "note"):
             continue
+        item_collections = {
+            key.upper()
+            for key in data.get("collections", [])
+            if isinstance(key, str)
+        }
+        if normalized_collection_key not in item_collections:
+            continue
         result.append(_item_to_dict(item, truncate_abstract=500))
 
-    return json.dumps({"items": result, "total": len(result)})
+    return json.dumps({
+        "collection_key": normalized_collection_key,
+        "collection_found": True,
+        "items": result,
+        "total": len(result),
+    })
 
 
 def get_item(item_key: str) -> str:
@@ -1813,30 +1885,13 @@ def get_bibtex_and_citation_for_items(
 
     for key in requested_keys:
         try:
-            citation = _fetch_item_export(
-                key,
-                content="citation",
-                style=style,
-                locale=locale,
-            )
-            bibliography = _fetch_item_export(
-                key,
-                content="bib",
-                style=style,
-                locale=locale,
-            )
-            bibtex = _fetch_item_export(
-                key,
-                content="bibtex",
-                style=style,
-                locale=locale,
-            )
+            exports = _fetch_item_exports(key, style=style, locale=locale)
 
             results.append({
                 "key": key,
-                "citation": _xhtml_to_text(citation),
-                "bibliography": _xhtml_to_text(bibliography),
-                "bibtex": bibtex.strip(),
+                "citation": _xhtml_to_text(exports["citation"]),
+                "bibliography": _xhtml_to_text(exports["bibliography"]),
+                "bibtex": exports["bibtex"].strip(),
             })
         except Exception as exc:
             errors.append({

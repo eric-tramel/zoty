@@ -199,7 +199,7 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result, {"error": "Provide item_key"})
         get_zot_mock.assert_not_called()
 
-    def test_search_includes_attachment_filepaths(self):
+    def test_search_includes_attachment_count(self):
         attachment_doc = {
             "doc_id": "chunk:ATTACH1:0",
             "parent_key": "PARENT1",
@@ -218,11 +218,87 @@ class AttachmentPathsTests(DbTestCase):
 
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["results"][0]["key"], "PARENT1")
-        self.assertEqual(
-            result["results"][0]["attachments"][0]["filepath"],
-            str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
-        )
+        self.assertEqual(result["results"][0]["attachment_count"], 1)
+        self.assertNotIn("attachments", result["results"][0])
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+
+
+class CollectionItemTests(DbTestCase):
+    def test_list_collection_items_returns_structured_error_for_invalid_key(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("missing"))
+
+        self.assertEqual(result["collection_key"], "MISSING")
+        self.assertFalse(result["collection_found"])
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertIn("not found", result["error"])
+        zot.collection_items.assert_not_called()
+
+    def test_list_collection_items_returns_structured_filtered_items_for_valid_key(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+        zot.collection_items.return_value = [
+            {
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "preprint",
+                    "title": "First Paper",
+                    "creators": [{"firstName": "Jane", "lastName": "Example"}],
+                    "date": "2026-03-10",
+                    "DOI": "10.1000/one",
+                    "url": "https://example.org/one",
+                    "tags": [{"tag": "chemistry"}],
+                    "collections": ["COLL123"],
+                    "abstractNote": "First abstract.",
+                }
+            },
+            {
+                "data": {
+                    "key": "ITEM2",
+                    "itemType": "preprint",
+                    "title": "Wrong Collection",
+                    "creators": [{"firstName": "John", "lastName": "Example"}],
+                    "date": "2026-03-11",
+                    "DOI": "10.1000/two",
+                    "url": "https://example.org/two",
+                    "tags": [],
+                    "collections": ["OTHER"],
+                    "abstractNote": "Second abstract.",
+                }
+            },
+            {
+                "data": {
+                    "key": "ATTACH1",
+                    "itemType": "attachment",
+                    "title": "Attachment",
+                    "creators": [],
+                    "date": "",
+                    "DOI": "",
+                    "url": "",
+                    "tags": [],
+                    "collections": ["COLL123"],
+                    "abstractNote": "",
+                }
+            },
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=5))
+
+        self.assertEqual(result["collection_key"], "COLL123")
+        self.assertTrue(result["collection_found"])
+        self.assertEqual(result["total"], 1)
+        self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
+        self.assertEqual(result["items"][0]["title"], "First Paper")
+        zot.collection_items.assert_called_once_with("COLL123", limit=5)
 
 
 class SearchBehaviorTests(DbTestCase):
@@ -764,17 +840,16 @@ class CitationEntryTests(DbTestCase):
         zot = Mock()
 
         def item_side_effect(item_key, **kwargs):
-            self.assertEqual(kwargs["format"], "atom")
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
             self.assertEqual(kwargs["style"], "apa")
             self.assertEqual(kwargs["locale"], "fr-FR")
 
-            content = kwargs["content"]
-            values = {
+            return {
                 "citation": [f"<span>{item_key} &amp; cite</span>"],
                 "bib": [f"<div>{item_key} <i>reference</i></div>"],
                 "bibtex": [f"@article{{{item_key},\n  title={{Example}}\n}}"],
             }
-            return values[content]
 
         zot.item.side_effect = item_side_effect
 
@@ -810,14 +885,13 @@ class CitationEntryTests(DbTestCase):
             if item_key == "BADKEY":
                 raise RuntimeError("missing item")
 
-            content = kwargs["content"]
-            if content == "citation":
-                return [f"<span>{item_key} cite</span>"]
-            if content == "bib":
-                return [f"<div>{item_key} ref</div>"]
-            if content == "bibtex":
-                return [f"@article{{{item_key}}}"]
-            raise AssertionError(f"Unexpected content: {content}")
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
+            return {
+                "citation": [f"<span>{item_key} cite</span>"],
+                "bib": [f"<div>{item_key} ref</div>"],
+                "bibtex": [f"@article{{{item_key}}}"],
+            }
 
         zot.item.side_effect = item_side_effect
 
