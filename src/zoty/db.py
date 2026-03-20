@@ -1820,10 +1820,13 @@ def _search_within_item_response(
     *,
     query: str,
     matches: list[dict[str, Any]],
+    requested_limit: int,
+    applied_limit: int,
     key: str | None = None,
     item: dict[str, Any] | None = None,
     item_keys: list[str] | None = None,
     items: list[dict[str, Any]] | None = None,
+    match_counts: dict[str, int] | None = None,
     missing_item_keys: list[str] | None = None,
     error: str | None = None,
     warning: str | None = None,
@@ -1832,10 +1835,12 @@ def _search_within_item_response(
         "matches": matches,
         "query": query,
         "total": len(matches),
+        **_limit_response_metadata(requested_limit, applied_limit, _SEARCH_RESULT_LIMIT_CAP),
     }
     if item_keys is not None:
         payload["item_keys"] = list(item_keys)
         payload["items"] = items or []
+        payload["match_counts"] = dict(match_counts or {})
         if missing_item_keys:
             payload["missing_item_keys"] = list(missing_item_keys)
     else:
@@ -2013,7 +2018,7 @@ def search_within_item(
     item_keys: list[str] | None = None,
 ) -> str:
     """BM25 ranked passage search within one or more parent items."""
-    limit = max(1, limit)
+    requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_RESULT_LIMIT_CAP)
     requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
     unique_requested_keys: list[str] = []
     for key in requested_keys:
@@ -2025,6 +2030,8 @@ def search_within_item(
             key="",
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             error="Provide item_key or item_keys",
         )
 
@@ -2039,14 +2046,19 @@ def search_within_item(
             return _search_within_item_response(
                 query=query,
                 matches=[],
+                requested_limit=requested_limit,
+                applied_limit=applied_limit,
                 item_keys=unique_requested_keys,
                 items=[],
+                match_counts={},
                 error="Index is still building, please retry in a moment",
             )
         return _search_within_item_response(
             key=normalized_item_key,
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             error="Index is still building, please retry in a moment",
         )
 
@@ -2058,8 +2070,11 @@ def search_within_item(
             return _search_within_item_response(
                 query=query,
                 matches=[],
+                requested_limit=requested_limit,
+                applied_limit=applied_limit,
                 item_keys=unique_requested_keys,
                 items=[],
+                match_counts={},
                 missing_item_keys=missing_item_keys,
                 error="None of the requested item keys were found in the search index",
             )
@@ -2067,6 +2082,8 @@ def search_within_item(
             key=normalized_item_key,
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             error=f"Item {normalized_item_key} was not found in the search index",
         )
 
@@ -2086,8 +2103,11 @@ def search_within_item(
             return _search_within_item_response(
                 query=query,
                 matches=[],
+                requested_limit=requested_limit,
+                applied_limit=applied_limit,
                 item_keys=found_item_keys,
                 items=items_summary,
+                match_counts={key: 0 for key in found_item_keys},
                 missing_item_keys=missing_item_keys,
                 warning=warning,
             )
@@ -2095,6 +2115,8 @@ def search_within_item(
             key=normalized_item_key,
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             item=item_summary,
         )
 
@@ -2116,8 +2138,11 @@ def search_within_item(
             return _search_within_item_response(
                 query=query,
                 matches=[],
+                requested_limit=requested_limit,
+                applied_limit=applied_limit,
                 item_keys=found_item_keys,
                 items=items_summary,
+                match_counts={key: 0 for key in found_item_keys},
                 missing_item_keys=missing_item_keys,
                 warning=" ".join(warnings),
             )
@@ -2125,6 +2150,8 @@ def search_within_item(
             key=normalized_item_key,
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             item=item_summary,
             warning=_EMPTY_QUERY_WARNING,
         )
@@ -2136,8 +2163,9 @@ def search_within_item(
     }
 
     max_docs = len(state.corpus_docs)
-    batch_size = min(max(limit * 20, 200), max_docs)
+    batch_size = min(max(applied_limit * 20, 200), max_docs)
     matches: list[dict[str, Any]] = []
+    match_counts = {key: 0 for key in found_item_keys}
     seen_doc_ids: set[str] = set()
     found_item_key_set = set(found_item_keys)
 
@@ -2170,8 +2198,10 @@ def search_within_item(
                 attachments_by_key=attachments_lookup_by_parent.get(parent_key, {}),
                 include_parent_key=multi_item,
             ))
+            if multi_item:
+                match_counts[parent_key] += 1
 
-            if len(matches) >= limit:
+            if len(matches) >= applied_limit:
                 found_enough = True
                 break
 
@@ -2189,9 +2219,12 @@ def search_within_item(
             )
         return _search_within_item_response(
             query=query,
-            matches=matches[:limit],
+            matches=matches[:applied_limit],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             item_keys=found_item_keys,
             items=items_summary,
+            match_counts=match_counts,
             missing_item_keys=missing_item_keys,
             warning=warning,
         )
@@ -2199,7 +2232,9 @@ def search_within_item(
     return _search_within_item_response(
         key=normalized_item_key,
         query=query,
-        matches=matches[:limit],
+        matches=matches[:applied_limit],
+        requested_limit=requested_limit,
+        applied_limit=applied_limit,
         item=item_summary,
     )
 
