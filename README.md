@@ -6,7 +6,7 @@ Lightweight Zotero MCP server for AI agents.
 
 ## What it does
 
-MCP server that connects AI agents to your local Zotero library. Provides 7 tools: BM25-ranked search over titles and abstracts, collection browsing, item lookup, BibTeX plus formatted citation export for item keys returned by search, and paper ingestion by arXiv ID or DOI with automatic PDF attachment.
+MCP server that connects AI agents to your local Zotero library. Provides 7 tools: BM25-ranked search over titles, abstracts, and indexed attachment full text, collection browsing, item lookup, BibTeX plus formatted citation export for item keys returned by search, and paper ingestion by arXiv ID or DOI with automatic PDF attachment.
 
 ## Requirements
 
@@ -126,7 +126,7 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | BM25-ranked search over item titles and abstracts, including attachment filepaths |
+| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
 | `get_item` | Full metadata for a single item by key, including attachment filepaths |
@@ -136,9 +136,9 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 ## How it works
 
-Read operations go through [pyzotero](https://github.com/urschrei/pyzotero) against Zotero's local API (`localhost:23119`). The BM25 search index builds in a background thread at startup so the MCP handshake completes immediately.
+Read operations still use [pyzotero](https://github.com/urschrei/pyzotero) for collection/item APIs, but search now runs off a persistent sidecar index under `~/.cache/zoty/fulltext-index`. zoty reads Zotero metadata from `zotero.sqlite` in immutable mode, reuses Zotero's extracted attachment text caches (`.zotero-ft-cache`) for PDF/EPUB/HTML full text, chunks that text locally, and rebuilds immutable BM25 snapshots in the background. At startup zoty loads the active snapshot synchronously if one exists, then queues a refresh when Zotero content changed.
 
-Write operations use the Zotero connector endpoint (`/connector/saveItems`) to create metadata items. PDF attachment and collection assignment go through the zoty-bridge plugin, which executes JavaScript in Zotero's privileged context. This two-path design exists because Zotero's SQLite database uses exclusive locking -- external processes can read it (immutable mode) but not write to it while Zotero is running.
+Write operations use the Zotero connector endpoint (`/connector/saveItems`) to create metadata items. PDF attachment and collection assignment go through the zoty-bridge plugin, which executes JavaScript in Zotero's privileged context. The same bridge is used as a thin control plane to ask Zotero to generate missing full-text caches when needed; zoty does not add plugin-owned tables to `zotero.sqlite` or transfer raw attachment text through the bridge. This two-path design exists because Zotero's SQLite database uses exclusive locking -- external processes can read it (immutable mode) but not write to it while Zotero is running.
 
 arXiv traffic is throttled internally to respect arXiv's access policy. Concurrent `add_paper` calls queue transparently: metadata requests serialize with a 3-second gap, and arXiv PDF downloads are rate-limited separately.
 

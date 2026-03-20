@@ -708,6 +708,17 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
                     file=sys.stderr,
                 )
 
+        if pdf_attached and parent_key:
+            try:
+                from zoty import db as search_db
+
+                search_db.schedule_parent_fulltext_refresh([parent_key])
+            except Exception as e:
+                print(
+                    f"zoty: failed to schedule full-text refresh for {parent_key}: {e}",
+                    file=sys.stderr,
+                )
+
         # Format creators for output
         creators = []
         for c in item.get("creators", []):
