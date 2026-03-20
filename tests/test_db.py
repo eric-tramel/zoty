@@ -157,5 +157,124 @@ class AttachmentPathsTests(unittest.TestCase):
         )
 
 
+class CitationEntryTests(unittest.TestCase):
+    def test_normalize_item_keys_accepts_single_and_list_inputs(self):
+        result = db._normalize_item_keys(
+            item_key=" item123 ",
+            item_keys=[" item456 ", "", "Item789"],
+        )
+
+        self.assertEqual(result, ["ITEM123", "ITEM456", "ITEM789"])
+
+    def test_get_citation_entries_returns_single_item_exports(self):
+        zot = Mock()
+
+        def item_side_effect(item_key, **kwargs):
+            self.assertEqual(kwargs["format"], "atom")
+            self.assertEqual(kwargs["style"], "apa")
+            self.assertEqual(kwargs["locale"], "fr-FR")
+
+            content = kwargs["content"]
+            values = {
+                "citation": [f"<span>{item_key} &amp; cite</span>"],
+                "bib": [f"<div>{item_key} <i>reference</i></div>"],
+                "bibtex": [f"@article{{{item_key},\n  title={{Example}}\n}}"],
+            }
+            return values[content]
+
+        zot.item.side_effect = item_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_citation_entries(
+                    item_key="item123",
+                    style="apa",
+                    locale="fr-FR",
+                )
+            )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["requested"], 1)
+        self.assertEqual(result["style"], "apa")
+        self.assertEqual(result["locale"], "fr-FR")
+        self.assertEqual(
+            result["items"],
+            [
+                {
+                    "key": "ITEM123",
+                    "citation": "ITEM123 & cite",
+                    "bibliography": "ITEM123 reference",
+                    "bibtex": "@article{ITEM123,\n  title={Example}\n}",
+                }
+            ],
+        )
+
+    def test_get_citation_entries_returns_multiple_items_and_partial_errors(self):
+        zot = Mock()
+
+        def item_side_effect(item_key, **kwargs):
+            if item_key == "BADKEY":
+                raise RuntimeError("missing item")
+
+            content = kwargs["content"]
+            if content == "citation":
+                return [f"<span>{item_key} cite</span>"]
+            if content == "bib":
+                return [f"<div>{item_key} ref</div>"]
+            if content == "bibtex":
+                return [f"@article{{{item_key}}}"]
+            raise AssertionError(f"Unexpected content: {content}")
+
+        zot.item.side_effect = item_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(
+                db.get_citation_entries(
+                    item_keys=["good1", "badkey", "good2"],
+                )
+            )
+
+        self.assertEqual(
+            result["items"],
+            [
+                {
+                    "key": "GOOD1",
+                    "citation": "GOOD1 cite",
+                    "bibliography": "GOOD1 ref",
+                    "bibtex": "@article{GOOD1}",
+                },
+                {
+                    "key": "GOOD2",
+                    "citation": "GOOD2 cite",
+                    "bibliography": "GOOD2 ref",
+                    "bibtex": "@article{GOOD2}",
+                },
+            ],
+        )
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "BADKEY",
+                    "error": "Failed to fetch citation entry: missing item",
+                }
+            ],
+        )
+        self.assertEqual(result["requested"], 3)
+        self.assertEqual(result["total"], 2)
+
+    def test_get_citation_entries_requires_at_least_one_key(self):
+        result = json.loads(db.get_citation_entries())
+
+        self.assertEqual(
+            result,
+            {
+                "error": "Provide item_key or item_keys",
+                "items": [],
+                "total": 0,
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
