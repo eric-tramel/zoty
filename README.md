@@ -126,7 +126,7 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets |
+| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets and filters for collection, item type, or a single item key |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
 | `get_item` | Full metadata for a single item by key, including attachment filepaths |

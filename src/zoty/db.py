@@ -1474,10 +1474,12 @@ def search(
     query: str,
     collection_key: str = "",
     item_type: str = "",
+    item_key: str = "",
     limit: int = 10,
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
     limit = max(1, limit)
+    item_key = item_key.strip().upper()
 
     with _index_lock:
         state = _search_state
@@ -1533,6 +1535,8 @@ def search(
             parent_key = doc["parent_key"]
             parent = state.parents.get(parent_key)
             if not parent:
+                continue
+            if item_key and parent["key"].upper() != item_key:
                 continue
             if collection_key and collection_key not in parent["collections"]:
                 continue

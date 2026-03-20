@@ -466,6 +466,68 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["results"][0]["key"], "PARENT1")
 
+    def test_item_key_filter_restricts_search_to_one_parent(self):
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "First Paper",
+                "abstract": "First abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-10",
+                "DOI": "",
+                "url": "",
+            },
+            "PARENT2": {
+                "key": "PARENT2",
+                "dateModified": "2026-03-11 10:00:00",
+                "itemType": "preprint",
+                "title": "Second Paper",
+                "abstract": "Second abstract.",
+                "creators": ["John Example"],
+                "collections": ["COLL123"],
+                "tags": [],
+                "date": "2026-03-11",
+                "DOI": "",
+                "url": "",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT2",
+                "parent_key": "PARENT2",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match second",
+                "text_hash": "hash-2",
+            }, 8.0),
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        result = json.loads(db.search("query", item_key="parent1"))
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["results"][0]["key"], "PARENT1")
+
 
 class SnapshotLifecycleTests(DbTestCase):
     def _make_parent(self, parent_key="PARENT1"):

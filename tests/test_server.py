@@ -72,6 +72,7 @@ class ServerToolTests(unittest.TestCase):
                 query="transformer attention",
                 collection_key="COLL123",
                 item_type="preprint",
+                item_key="ITEM123",
                 limit=5,
             )
 
@@ -80,6 +81,7 @@ class ServerToolTests(unittest.TestCase):
             "transformer attention",
             collection_key="COLL123",
             item_type="preprint",
+            item_key="ITEM123",
             limit=5,
         )
 
