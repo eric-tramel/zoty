@@ -398,6 +398,17 @@ def _item_to_dict(
     return result
 
 
+def _empty_item_payload(item_key: str) -> dict[str, Any]:
+    """Build an empty item-shaped payload for error responses."""
+    payload = _item_to_dict(
+        {"data": {"key": item_key}},
+        truncate_abstract=0,
+        include_attachments=False,
+    )
+    payload["attachments"] = []
+    return payload
+
+
 def _normalize_item_keys(item_key: str = "", item_keys: list[str] | None = None) -> list[str]:
     """Normalize a single key and/or key list into a clean ordered list."""
     normalized: list[str] = []
@@ -1879,7 +1890,11 @@ def list_collections() -> str:
         zot = _get_zot()
         collections = zot.collections()
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch collections: {exc}"})
+        return json.dumps({
+            "collections": [],
+            "total": 0,
+            "error": f"Failed to fetch collections: {exc}",
+        })
 
     result = []
     for collection in collections:
@@ -1966,13 +1981,17 @@ def get_item(item_key: str) -> str:
     """Full metadata for a single item."""
     normalized_item_key = item_key.strip()
     if not normalized_item_key:
-        return json.dumps({"error": "Provide item_key"})
+        payload = _empty_item_payload("")
+        payload["error"] = "Provide item_key"
+        return json.dumps(payload)
 
     try:
         zot = _get_zot()
         item = zot.item(normalized_item_key)
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch item {normalized_item_key}: {exc}"})
+        payload = _empty_item_payload(normalized_item_key)
+        payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
+        return json.dumps(payload)
 
     return json.dumps(_item_to_dict(item, truncate_abstract=0, include_attachments=True))
 
@@ -1989,6 +2008,10 @@ def get_bibtex_and_citation_for_items(
         return json.dumps({
             "error": "Provide item_key or item_keys",
             "items": [],
+            "errors": [],
+            "requested": 0,
+            "style": style,
+            "locale": locale,
             "total": 0,
         })
 
@@ -2038,7 +2061,11 @@ def get_recent_items(limit: int = 10) -> str:
         )
         items = [item for item in items if item.get("data", {}).get("itemType") not in _SKIP_TYPES][:limit]
     except Exception as exc:
-        return json.dumps({"error": f"Failed to fetch recent items: {exc}"})
+        return json.dumps({
+            "items": [],
+            "total": 0,
+            "error": f"Failed to fetch recent items: {exc}",
+        })
 
     result = [
         _item_to_dict(

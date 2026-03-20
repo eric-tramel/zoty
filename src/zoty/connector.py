@@ -636,6 +636,23 @@ def _push_to_connector(item: dict, source_url: str) -> dict:
     return item
 
 
+def _add_paper_error_payload(error: str) -> dict:
+    """Build an empty add_paper payload for error responses."""
+    return {
+        "status": "",
+        "title": "",
+        "creators": [],
+        "date": "",
+        "itemType": "",
+        "DOI": "",
+        "url": "",
+        "abstract": "",
+        "pdf_attached": False,
+        "collection_added": False,
+        "error": error,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -649,7 +666,7 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
     (the metadata item and downloaded PDF are still preserved).
     """
     if not arxiv_id and not doi:
-        return json.dumps({"error": "Provide at least one of arxiv_id or doi"})
+        return json.dumps(_add_paper_error_payload("Provide at least one of arxiv_id or doi"))
 
     try:
         existing_key, existing_title = _find_existing_item_in_collection(
@@ -786,9 +803,9 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
     except urllib.error.URLError as e:
         source = "arXiv" if arxiv_id else "CrossRef"
         if "Connection refused" in str(e) or "localhost" in str(e):
-            return json.dumps({"error": "Cannot reach Zotero connector at localhost:23119. Is Zotero running?"})
-        return json.dumps({"error": f"Failed to fetch metadata from {source}: {e}"})
+            return json.dumps(_add_paper_error_payload("Cannot reach Zotero connector at localhost:23119. Is Zotero running?"))
+        return json.dumps(_add_paper_error_payload(f"Failed to fetch metadata from {source}: {e}"))
     except ValueError as e:
-        return json.dumps({"error": str(e)})
+        return json.dumps(_add_paper_error_payload(str(e)))
     except Exception as e:
-        return json.dumps({"error": f"Failed to add paper: {e}"})
+        return json.dumps(_add_paper_error_payload(f"Failed to add paper: {e}"))

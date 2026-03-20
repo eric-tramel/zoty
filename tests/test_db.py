@@ -225,15 +225,87 @@ class AttachmentPathsTests(DbTestCase):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item(""))
 
-        self.assertEqual(result, {"error": "Provide item_key"})
+        self.assertEqual(
+            result,
+            {
+                "key": "",
+                "itemType": "",
+                "title": "",
+                "creators": [],
+                "date": "",
+                "DOI": "",
+                "url": "",
+                "tags": [],
+                "collections": [],
+                "abstract": "",
+                "attachments": [],
+                "error": "Provide item_key",
+            },
+        )
         get_zot_mock.assert_not_called()
 
     def test_get_item_rejects_whitespace_only_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item("   "))
 
-        self.assertEqual(result, {"error": "Provide item_key"})
+        self.assertEqual(
+            result,
+            {
+                "key": "",
+                "itemType": "",
+                "title": "",
+                "creators": [],
+                "date": "",
+                "DOI": "",
+                "url": "",
+                "tags": [],
+                "collections": [],
+                "abstract": "",
+                "attachments": [],
+                "error": "Provide item_key",
+            },
+        )
         get_zot_mock.assert_not_called()
+
+    def test_get_item_returns_empty_skeleton_when_fetch_fails(self):
+        zot = Mock()
+        zot.item.side_effect = RuntimeError("missing item")
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(
+            result,
+            {
+                "key": "PARENT1",
+                "itemType": "",
+                "title": "",
+                "creators": [],
+                "date": "",
+                "DOI": "",
+                "url": "",
+                "tags": [],
+                "collections": [],
+                "abstract": "",
+                "attachments": [],
+                "error": "Failed to fetch item PARENT1: missing item",
+            },
+        )
+        zot.item.assert_called_once_with("PARENT1")
+
+    def test_list_collections_returns_structured_error_when_lookup_fails(self):
+        with patch("zoty.db._get_zot", side_effect=RuntimeError("connector unavailable")) as get_zot_mock:
+            result = json.loads(db.list_collections())
+
+        self.assertEqual(
+            result,
+            {
+                "collections": [],
+                "total": 0,
+                "error": "Failed to fetch collections: connector unavailable",
+            },
+        )
+        get_zot_mock.assert_called_once_with()
 
     def test_search_includes_attachment_count(self):
         attachment_doc = {
@@ -559,6 +631,19 @@ class RecentItemsTests(DbTestCase):
                 "Author5 Example",
                 "... and 3 more",
             ],
+        )
+
+    def test_get_recent_items_returns_structured_error_when_lookup_fails(self):
+        with patch("zoty.db._get_zot", side_effect=RuntimeError("connector unavailable")):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual(
+            result,
+            {
+                "items": [],
+                "total": 0,
+                "error": "Failed to fetch recent items: connector unavailable",
+            },
         )
 
 
@@ -1627,6 +1712,10 @@ class CitationEntryTests(DbTestCase):
             {
                 "error": "Provide item_key or item_keys",
                 "items": [],
+                "errors": [],
+                "requested": 0,
+                "style": "chicago-note-bibliography",
+                "locale": "en-US",
                 "total": 0,
             },
         )
