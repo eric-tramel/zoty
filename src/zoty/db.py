@@ -264,6 +264,10 @@ def _resolve_attachment_filepath(attachment_key: str, raw_path: str) -> str:
     return stored_path
 
 
+def _log_attachment_helper_error(message: str, exc: Exception) -> None:
+    print(f"zoty: {message}: {exc}", file=sys.stderr)
+
+
 def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict[str, Any]]]:
     """Return attachment metadata for each requested parent item key."""
     normalized_keys: list[str] = []
@@ -298,7 +302,11 @@ def _get_item_attachments_by_parent(item_keys: list[str]) -> dict[str, list[dict
                     ORDER BY parent.key ASC, child.dateAdded ASC""",
                 normalized_keys,
             ).fetchall()
-    except Exception:
+    except Exception as exc:
+        _log_attachment_helper_error(
+            f"failed to load attachment metadata for {', '.join(normalized_keys)}",
+            exc,
+        )
         return attachments_by_parent
 
     for row in rows:
@@ -341,7 +349,8 @@ def _get_item_attachment_count(item_key: str) -> int:
                    WHERE parent.key = ?""",
                 (key,),
             ).fetchone()
-    except Exception:
+    except Exception as exc:
+        _log_attachment_helper_error(f"failed to count attachments for {key}", exc)
         return 0
 
     return int(row["count"]) if row else 0
@@ -371,7 +380,11 @@ def _get_item_attachment_counts(item_keys: list[str]) -> dict[str, int]:
                     GROUP BY parent.key""",
                 normalized_keys,
             ).fetchall()
-    except Exception:
+    except Exception as exc:
+        _log_attachment_helper_error(
+            f"failed to count attachments for {', '.join(normalized_keys)}",
+            exc,
+        )
         return counts
 
     for row in rows:
