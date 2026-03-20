@@ -750,17 +750,16 @@ class CitationEntryTests(DbTestCase):
         zot = Mock()
 
         def item_side_effect(item_key, **kwargs):
-            self.assertEqual(kwargs["format"], "atom")
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
             self.assertEqual(kwargs["style"], "apa")
             self.assertEqual(kwargs["locale"], "fr-FR")
 
-            content = kwargs["content"]
-            values = {
+            return {
                 "citation": [f"<span>{item_key} &amp; cite</span>"],
                 "bib": [f"<div>{item_key} <i>reference</i></div>"],
                 "bibtex": [f"@article{{{item_key},\n  title={{Example}}\n}}"],
             }
-            return values[content]
 
         zot.item.side_effect = item_side_effect
 
@@ -796,14 +795,13 @@ class CitationEntryTests(DbTestCase):
             if item_key == "BADKEY":
                 raise RuntimeError("missing item")
 
-            content = kwargs["content"]
-            if content == "citation":
-                return [f"<span>{item_key} cite</span>"]
-            if content == "bib":
-                return [f"<div>{item_key} ref</div>"]
-            if content == "bibtex":
-                return [f"@article{{{item_key}}}"]
-            raise AssertionError(f"Unexpected content: {content}")
+            self.assertEqual(kwargs["format"], "json")
+            self.assertEqual(kwargs["include"], "bib,citation,bibtex")
+            return {
+                "citation": [f"<span>{item_key} cite</span>"],
+                "bib": [f"<div>{item_key} ref</div>"],
+                "bibtex": [f"@article{{{item_key}}}"],
+            }
 
         zot.item.side_effect = item_side_effect
 
