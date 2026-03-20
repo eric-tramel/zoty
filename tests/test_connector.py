@@ -164,7 +164,18 @@ class ArxivRateLimiterTests(unittest.TestCase):
         ):
             result = json.loads(connector.add_paper(arxiv_id="not-a-real-id"))
 
-        self.assertEqual(result, {"error": "Invalid arXiv ID: not-a-real-id. No paper found."})
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["title"], "")
+        self.assertEqual(result["creators"], [])
+        self.assertEqual(result["date"], "")
+        self.assertEqual(result["itemType"], "")
+        self.assertEqual(result["DOI"], "")
+        self.assertEqual(result["url"], "")
+        self.assertEqual(result["abstract"], "")
+        self.assertFalse(result["pdf_attached"])
+        self.assertFalse(result["collection_added"])
+        self.assertEqual(result["collection_key"], "")
+        self.assertEqual(result["error"], "Invalid arXiv ID: not-a-real-id. No paper found.")
 
     @patch("zoty.connector._retrieve_url", autospec=True)
     def test_download_with_rate_limit_uses_pdf_limiter_for_arxiv_urls(self, retrieve_mock):
