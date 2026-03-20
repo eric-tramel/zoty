@@ -192,8 +192,8 @@ def get_recent_items(limit: int = 10) -> str:
 
     Returns:
         JSON with `items`, `total`, and limit metadata. Each item includes
-        `key`, `title`, `creators`, `date`, truncated `abstract` (500 chars),
-        `attachment_count`, and other summary fields.
+        `key`, `title`, `creators`, `date`, `date_added`, truncated
+        `abstract` (500 chars), `attachment_count`, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 

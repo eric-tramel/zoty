@@ -40,7 +40,7 @@ _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
 _SEARCH_WITHIN_RESULT_LIMIT_CAP = 25
-_LIST_RESULT_LIMIT_CAP = 100
+_LIST_RESULT_LIMIT_CAP = 25
 _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
 _ITEM_DETAIL_MAX_WORKERS = 4
@@ -200,6 +200,19 @@ def _normalize_item_date(value: str) -> str:
         return parts[0]
 
     return normalized
+
+
+def _normalize_iso_timestamp(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not normalized:
+        return ""
+
+    try:
+        return datetime.fromisoformat(normalized.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        if " " in normalized and "T" not in normalized:
+            return normalized.replace(" ", "T", 1)
+        return normalized
 
 
 def _extract_query_terms(query: str) -> list[str]:
@@ -408,6 +421,7 @@ def _item_to_dict(
     *,
     include_attachment_count: bool = False,
     include_attachments: bool = False,
+    include_date_added: bool = False,
     max_creators: int = -1,
     attachments: list[dict[str, Any]] | None = None,
     attachment_count: int | None = None,
@@ -436,6 +450,9 @@ def _item_to_dict(
         "collections": collections,
         "abstract": abstract,
     }
+
+    if include_date_added:
+        result["date_added"] = _normalize_iso_timestamp(str(data.get("dateAdded", "") or ""))
 
     if include_attachment_count:
         if attachment_count is None:
@@ -1879,7 +1896,7 @@ def _search_response(
 
 
 def _apply_limit_cap(limit: int, cap: int) -> tuple[int, int]:
-    requested_limit = max(1, limit)
+    requested_limit = max(0, limit)
     return requested_limit, min(requested_limit, cap)
 
 
@@ -2016,8 +2033,7 @@ def search(
     include_attachments: bool = False,
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
-    requested_limit = max(1, limit)
-    applied_limit = min(requested_limit, _SEARCH_RESULT_LIMIT_CAP)
+    requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_RESULT_LIMIT_CAP)
     normalized_collection_key = collection_key.strip().upper()
     normalized_item_type = item_type.strip().lower()
 
@@ -2070,6 +2086,14 @@ def search(
             requested_limit=requested_limit,
             applied_limit=applied_limit,
             warning=" ".join(filter_warnings),
+        )
+
+    if applied_limit == 0:
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
         )
 
     query_tokens = bm25s.tokenize(
@@ -2269,6 +2293,29 @@ def search_within_item(
             item=item_summary,
         )
 
+    if applied_limit == 0:
+        if multi_item:
+            warning = None
+            if missing_item_keys:
+                warning = (
+                    "Some requested item keys were not found in the search index: "
+                    + ", ".join(missing_item_keys)
+                )
+            return _search_within_item_response(
+                query=query,
+                matches=[],
+                item_keys=found_item_keys,
+                items=items_summary,
+                missing_item_keys=missing_item_keys,
+                warning=warning,
+            )
+        return _search_within_item_response(
+            key=normalized_item_key,
+            query=query,
+            matches=[],
+            item=item_summary,
+        )
+
     query_tokens = bm25s.tokenize(
         [query],
         stopwords="en",
@@ -2438,6 +2485,14 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
                 "total": 0,
                 **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
                 "error": f"Collection {normalized_collection_key} was not found",
+            })
+        if applied_limit == 0:
+            return json.dumps({
+                "collection_key": normalized_collection_key,
+                "collection_found": True,
+                "items": [],
+                "total": 0,
+                **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             })
         items = zot.collection_items(normalized_collection_key, limit=applied_limit)
     except Exception as exc:
@@ -2626,6 +2681,13 @@ def get_bibtex_and_citation_for_items(
 def get_recent_items(limit: int = 10) -> str:
     """Recently added items, sorted by dateAdded descending."""
     requested_limit, applied_limit = _apply_limit_cap(limit, _LIST_RESULT_LIMIT_CAP)
+    if applied_limit == 0:
+        return json.dumps({
+            "items": [],
+            "total": 0,
+            **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
+        })
+
     try:
         zot = _get_zot()
         items = zot.items(
@@ -2647,6 +2709,7 @@ def get_recent_items(limit: int = 10) -> str:
             item,
             truncate_abstract=500,
             include_attachment_count=True,
+            include_date_added=True,
             max_creators=_LIST_VIEW_MAX_CREATORS,
         )
         for item in items

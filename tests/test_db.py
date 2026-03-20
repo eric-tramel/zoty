@@ -89,6 +89,7 @@ class DbTestCase(unittest.TestCase):
                 "title": "Example Paper",
                 "creators": [{"firstName": "Jane", "lastName": "Example"}],
                 "date": "2026-03-10",
+                "dateAdded": "2026-03-10 10:00:00",
                 "DOI": "10.1000/example",
                 "url": "https://example.org/paper",
                 "tags": [{"tag": "chemistry"}],
@@ -660,9 +661,9 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["requested_limit"], 50)
-        self.assertEqual(result["applied_limit"], 50)
+        self.assertEqual(result["applied_limit"], db._LIST_RESULT_LIMIT_CAP)
         self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
-        self.assertFalse(result["limit_capped"])
+        self.assertTrue(result["limit_capped"])
         self.assertIn("not found", result["error"])
         zot.collection_items.assert_not_called()
 
@@ -777,6 +778,25 @@ class CollectionItemTests(DbTestCase):
         self.assertTrue(result["limit_capped"])
         zot.collection_items.assert_called_once_with("COLL123", limit=db._LIST_RESULT_LIMIT_CAP)
 
+    def test_list_collection_items_preserves_zero_requested_limit_and_skips_item_fetch(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=0))
+
+        self.assertEqual(result["collection_key"], "COLL123")
+        self.assertTrue(result["collection_found"])
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 0)
+        self.assertEqual(result["applied_limit"], 0)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
+        zot.collection_items.assert_not_called()
+
     def test_list_collection_items_truncates_long_creator_lists(self):
         zot = Mock()
         zot.collections.return_value = [
@@ -858,6 +878,18 @@ class RecentItemsTests(DbTestCase):
             sort="dateAdded",
             direction="desc",
         )
+
+    def test_get_recent_items_preserves_zero_requested_limit_and_skips_fetch(self):
+        with patch("zoty.db._get_zot") as get_zot_mock:
+            result = json.loads(db.get_recent_items(limit=0))
+
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 0)
+        self.assertEqual(result["applied_limit"], 0)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
+        get_zot_mock.assert_not_called()
 
     def test_get_recent_items_returns_structured_error_skeleton_for_fetch_failure(self):
         with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
@@ -1032,7 +1064,7 @@ class RecentItemsTests(DbTestCase):
             )
             conn.commit()
 
-    def test_get_recent_items_includes_attachment_count(self):
+    def test_get_recent_items_includes_attachment_count_and_date_added(self):
         zot = Mock()
         zot.items.return_value = [
             {
@@ -1042,6 +1074,7 @@ class RecentItemsTests(DbTestCase):
                     "title": "Recent Paper",
                     "creators": [{"firstName": "Jane", "lastName": "Example"}],
                     "date": "2026-03-10",
+                    "dateAdded": "2026-03-10 10:00:00",
                     "DOI": "10.1000/recent",
                     "url": "https://example.org/recent",
                     "tags": [{"tag": "ml"}],
@@ -1075,6 +1108,7 @@ class RecentItemsTests(DbTestCase):
         self.assertFalse(result["limit_capped"])
         self.assertEqual(result["items"][0]["key"], "ITEM1")
         self.assertEqual(result["items"][0]["attachment_count"], 1)
+        self.assertEqual(result["items"][0]["date_added"], "2026-03-10T10:00:00")
         self.assertNotIn("attachments", result["items"][0])
         zot.items.assert_called_once_with(limit=3, sort="dateAdded", direction="desc")
 
@@ -1510,6 +1544,32 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual([call["k"] for call in db._search_state.retriever.calls], [500])
         self.assertEqual(result["items"][0]["key"], "PARENT1")
 
+    def test_search_preserves_zero_requested_limit_without_retrieval(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search("query", limit=0))
+
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 0)
+        self.assertEqual(result["applied_limit"], 0)
+        self.assertEqual(result["limit_cap"], db._SEARCH_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
+        self.assertEqual(db._search_state.retriever.calls, [])
+
     def test_search_returns_warning_when_query_has_no_searchable_terms(self):
         self._install_search_state([
             ({
@@ -1656,6 +1716,29 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["matches"][0]["attachment_key"], "ATTACH1")
         self.assertEqual(result["matches"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["matches"][2])
+
+    def test_search_within_item_returns_no_matches_when_limit_is_zero(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search_within_item("parent1", "query", limit=0))
+
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["matches"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(db._search_state.retriever.calls, [])
 
     def test_search_within_item_returns_lean_item_summary_when_query_has_no_terms(self):
         self._install_search_state([

@@ -85,6 +85,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("truncated `abstract` (500 chars)", list_doc)
         self.assertIn("Requested items to return before the cap is applied", recent_doc)
         self.assertIn("JSON with `items`, `total`, and limit metadata.", recent_doc)
+        self.assertIn("`date_added`", recent_doc)
         self.assertIn("truncated `abstract` (500 chars)", recent_doc)
 
     def test_search_library_delegates_to_db(self):
@@ -164,6 +165,7 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("include parent `key` only for multi-item calls", search_within_doc)
         self.assertIn("attachment_count", server.list_collection_items.__doc__)
         self.assertIn("attachment_count", server.get_recent_items.__doc__)
+        self.assertIn("date_added", server.get_recent_items.__doc__)
         self.assertIn("Single-key requests return JSON", server.get_item.__doc__)
         self.assertIn("`item_keys`, `items`, `requested`, `total`", server.get_item.__doc__)
 
