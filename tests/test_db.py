@@ -447,6 +447,10 @@ class CollectionItemTests(DbTestCase):
         self.assertFalse(result["collection_found"])
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 50)
+        self.assertEqual(result["applied_limit"], 50)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
         self.assertIn("not found", result["error"])
         zot.collection_items.assert_not_called()
 
@@ -520,6 +524,10 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual(result["collection_key"], "COLL123")
         self.assertTrue(result["collection_found"])
         self.assertEqual(result["total"], 1)
+        self.assertEqual(result["requested_limit"], 5)
+        self.assertEqual(result["applied_limit"], 5)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
         self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
         self.assertEqual(result["items"][0]["title"], "First Paper")
         self.assertEqual(
@@ -535,6 +543,37 @@ class CollectionItemTests(DbTestCase):
             ],
         )
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
+
+    def test_list_collection_items_caps_requested_limit_and_reports_metadata(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+        zot.collection_items.return_value = [
+            {
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "preprint",
+                    "title": "First Paper",
+                    "creators": [{"firstName": "Jane", "lastName": "Example"}],
+                    "date": "2026-03-10",
+                    "DOI": "10.1000/one",
+                    "url": "https://example.org/one",
+                    "tags": [{"tag": "chemistry"}],
+                    "collections": ["COLL123"],
+                    "abstractNote": "First abstract.",
+                }
+            }
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=999))
+
+        self.assertEqual(result["requested_limit"], 999)
+        self.assertEqual(result["applied_limit"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertTrue(result["limit_capped"])
+        zot.collection_items.assert_called_once_with("COLL123", limit=db._LIST_RESULT_LIMIT_CAP)
 
     def test_list_collection_items_truncates_long_creator_lists(self):
         zot = Mock()
@@ -585,6 +624,10 @@ class RecentItemsTests(DbTestCase):
             result = json.loads(db.get_recent_items(limit=1))
 
         self.assertEqual(result["total"], 1)
+        self.assertEqual(result["requested_limit"], 1)
+        self.assertEqual(result["applied_limit"], 1)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
         self.assertEqual(
             result["items"][0]["creators"],
             [
@@ -597,12 +640,33 @@ class RecentItemsTests(DbTestCase):
             ],
         )
 
+    def test_get_recent_items_caps_requested_limit_and_reports_metadata(self):
+        zot = Mock()
+        zot.items.return_value = [self._paper_item()]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_recent_items(limit=999))
+
+        self.assertEqual(result["requested_limit"], 999)
+        self.assertEqual(result["applied_limit"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertTrue(result["limit_capped"])
+        zot.items.assert_called_once_with(
+            limit=db._LIST_RESULT_LIMIT_CAP * 3,
+            sort="dateAdded",
+            direction="desc",
+        )
+
     def test_get_recent_items_returns_structured_error_skeleton_for_fetch_failure(self):
         with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
             result = json.loads(db.get_recent_items(limit=1))
 
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 0)
+        self.assertEqual(result["requested_limit"], 1)
+        self.assertEqual(result["applied_limit"], 1)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
         self.assertIn("Failed to fetch recent items: boom", result["error"])
 
 
@@ -803,6 +867,10 @@ class RecentItemsTests(DbTestCase):
             result = json.loads(db.get_recent_items(limit=1))
 
         self.assertEqual(result["total"], 1)
+        self.assertEqual(result["requested_limit"], 1)
+        self.assertEqual(result["applied_limit"], 1)
+        self.assertEqual(result["limit_cap"], db._LIST_RESULT_LIMIT_CAP)
+        self.assertFalse(result["limit_capped"])
         self.assertEqual(result["items"][0]["key"], "ITEM1")
         self.assertEqual(
             result["items"][0]["attachments"],
