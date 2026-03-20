@@ -155,6 +155,15 @@ class ServerToolTests(unittest.TestCase):
         self.assertIn("include parent `key` only for multi-item calls", search_within_doc)
         self.assertIn("attachment_count", server.list_collection_items.__doc__)
         self.assertIn("attachment_count", server.get_recent_items.__doc__)
+        self.assertIn("Single-key requests return JSON", server.get_item.__doc__)
+        self.assertIn("`item_keys`, `items`, `requested`, `total`", server.get_item.__doc__)
+
+    def test_get_item_delegates_to_db(self):
+        with patch.object(server.db, "get_item", return_value='{"key": "ITEM123"}') as db_mock:
+            result = server.get_item(item_key="ITEM123", item_keys=["ITEM456"])
+
+        self.assertEqual(result, '{"key": "ITEM123"}')
+        db_mock.assert_called_once_with(item_key="ITEM123", item_keys=["ITEM456"])
 
     def test_get_bibtex_and_citation_for_items_delegates_to_db(self):
         with patch.object(server.db, "get_bibtex_and_citation_for_items", return_value='{"items": []}') as db_mock:
@@ -184,6 +193,21 @@ class ServerToolTests(unittest.TestCase):
         description = asyncio.run(get_tool_description())
 
         self.assertIn("Provide at least one of `item_key` or `item_keys`.", description)
+
+    def test_get_item_tool_description_mentions_batch_inputs_and_response_shape(self):
+        async def get_tool_description():
+            tools = await server.mcp_server.list_tools()
+            for tool in tools:
+                if tool.name == "get_item":
+                    return tool.description
+            self.fail("get_item tool was not registered")
+
+        description = asyncio.run(get_tool_description())
+        normalized_description = " ".join(description.split())
+
+        self.assertIn("`item_key` and `item_keys` can be combined", normalized_description)
+        self.assertIn("Single-key requests keep the legacy single-item response shape.", normalized_description)
+        self.assertIn("`item_keys`, `items`, `requested`, `total`", normalized_description)
 
     def test_add_paper_tool_description_mentions_required_inputs_and_precedence(self):
         async def get_tool_description():

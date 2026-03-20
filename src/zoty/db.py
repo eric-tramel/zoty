@@ -42,6 +42,7 @@ _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_RESULT_LIMIT_CAP = 100
 _LIST_VIEW_MAX_CREATORS = 5
 _CITATION_EXPORT_MAX_WORKERS = 4
+_ITEM_DETAIL_MAX_WORKERS = 4
 _DETAIL_VIEW_MAX_CREATORS = 15
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
@@ -406,6 +407,8 @@ def _item_to_dict(
     include_attachment_count: bool = False,
     include_attachments: bool = False,
     max_creators: int = -1,
+    attachments: list[dict[str, Any]] | None = None,
+    attachment_count: int | None = None,
 ) -> dict:
     """Convert a pyzotero item to a concise dict for tool output."""
     data = item.get("data", {})
@@ -433,12 +436,16 @@ def _item_to_dict(
     }
 
     if include_attachment_count:
-        result["attachment_count"] = _get_item_attachment_count(data.get("key", ""))
+        if attachment_count is None:
+            attachment_count = _get_item_attachment_count(data.get("key", ""))
+        result["attachment_count"] = attachment_count
 
     if include_attachments:
-        attachments = _get_item_attachments(data.get("key", ""))
-        result["attachment_count"] = len(attachments)
-        result["attachments"] = attachments
+        resolved_attachments = attachments
+        if resolved_attachments is None:
+            resolved_attachments = _get_item_attachments(data.get("key", ""))
+        result["attachment_count"] = len(resolved_attachments)
+        result["attachments"] = resolved_attachments
 
     return result
 
@@ -481,6 +488,11 @@ def _normalize_item_keys(item_key: str = "", item_keys: list[str] | None = None)
             normalized.append(cleaned)
 
     return normalized
+
+
+def _fetch_item_detail(item_key: str) -> dict[str, Any]:
+    """Fetch one Zotero item detail payload."""
+    return _get_zot().item(item_key)
 
 
 def _xhtml_to_text(fragment: str) -> str:
@@ -2285,30 +2297,78 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
     })
 
 
-def get_item(item_key: str) -> str:
-    """Full metadata for a single item."""
-    normalized_item_key = item_key.strip().upper()
-    if not normalized_item_key:
+def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
+    """Full metadata for one item or a batch of items."""
+    requested_keys = _normalize_item_keys(item_key=item_key, item_keys=item_keys)
+    if not requested_keys:
+        if item_keys is not None:
+            return json.dumps({
+                "error": "Provide item_key or item_keys",
+                "items": [],
+                "total": 0,
+            })
+
         payload = _empty_item_payload()
         payload["error"] = "Provide item_key"
         return json.dumps(payload)
 
-    try:
-        zot = _get_zot()
-        item = zot.item(normalized_item_key)
-    except Exception as exc:
-        payload = _empty_item_payload(normalized_item_key)
-        payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
-        return json.dumps(payload)
+    attachments_by_parent = _get_item_attachments_by_parent(requested_keys)
 
-    return json.dumps(
-        _item_to_dict(
-            item,
-            truncate_abstract=0,
-            include_attachments=True,
-            max_creators=_DETAIL_VIEW_MAX_CREATORS,
+    if len(requested_keys) == 1:
+        normalized_item_key = requested_keys[0]
+        try:
+            item = _fetch_item_detail(normalized_item_key)
+        except Exception as exc:
+            payload = _empty_item_payload(normalized_item_key)
+            payload["error"] = f"Failed to fetch item {normalized_item_key}: {exc}"
+            return json.dumps(payload)
+
+        return json.dumps(
+            _item_to_dict(
+                item,
+                truncate_abstract=0,
+                include_attachments=True,
+                max_creators=_DETAIL_VIEW_MAX_CREATORS,
+                attachments=attachments_by_parent.get(normalized_item_key, []),
+            )
         )
-    )
+
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    max_workers = min(_ITEM_DETAIL_MAX_WORKERS, len(requested_keys))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(_fetch_item_detail, key) for key in requested_keys]
+        for key, future in zip(requested_keys, futures):
+            try:
+                item = future.result()
+            except Exception as exc:
+                errors.append({
+                    "key": key,
+                    "error": f"Failed to fetch item {key}: {exc}",
+                })
+                continue
+
+            items.append(
+                _item_to_dict(
+                    item,
+                    truncate_abstract=0,
+                    include_attachments=True,
+                    max_creators=_DETAIL_VIEW_MAX_CREATORS,
+                    attachments=attachments_by_parent.get(key, []),
+                )
+            )
+
+    payload: dict[str, Any] = {
+        "item_keys": requested_keys,
+        "items": items,
+        "requested": len(requested_keys),
+        "total": len(items),
+    }
+    if errors:
+        payload["errors"] = errors
+
+    return json.dumps(payload)
 
 
 def get_bibtex_and_citation_for_items(

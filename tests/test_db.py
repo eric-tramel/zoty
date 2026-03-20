@@ -301,6 +301,31 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachments"], [])
         get_zot_mock.assert_not_called()
 
+    def test_get_item_supports_single_key_via_item_keys_without_changing_shape(self):
+        zot = Mock()
+        zot.item.return_value = self._paper_item()
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item(item_keys=[" parent1 "]))
+
+        self.assertEqual(result["key"], "PARENT1")
+        self.assertNotIn("items", result)
+        zot.item.assert_called_once_with("PARENT1")
+
+    def test_get_item_requires_at_least_one_key_for_batch_mode(self):
+        with patch("zoty.db._get_zot") as get_zot_mock:
+            result = json.loads(db.get_item(item_keys=[]))
+
+        self.assertEqual(
+            result,
+            {
+                "error": "Provide item_key or item_keys",
+                "items": [],
+                "total": 0,
+            },
+        )
+        get_zot_mock.assert_not_called()
+
     def test_get_item_returns_structured_error_skeleton_for_fetch_failure(self):
         zot = Mock()
         zot.item.side_effect = RuntimeError("boom")
@@ -347,6 +372,62 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(len(created_clients), 1)
         self.assertTrue(all(result is not None for result in results))
         self.assertEqual({id(result) for result in results}, {id(created_clients[0])})
+
+    def test_get_item_returns_multiple_items_and_partial_errors(self):
+        zot = Mock()
+
+        def item_side_effect(item_key):
+            if item_key == "BADKEY":
+                raise RuntimeError("missing item")
+
+            item = self._paper_item()
+            item["data"]["key"] = item_key
+            item["data"]["title"] = f"{item_key} title"
+            item["data"]["abstractNote"] = f"{item_key} abstract"
+            return item
+
+        zot.item.side_effect = item_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item(item_keys=["parent1", "badkey", "parent2"]))
+
+        self.assertEqual(result["item_keys"], ["PARENT1", "BADKEY", "PARENT2"])
+        self.assertEqual(result["requested"], 3)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([item["key"] for item in result["items"]], ["PARENT1", "PARENT2"])
+        self.assertEqual(
+            result["errors"],
+            [
+                {
+                    "key": "BADKEY",
+                    "error": "Failed to fetch item BADKEY: missing item",
+                }
+            ],
+        )
+
+    def test_get_item_fetches_multiple_items_concurrently_and_batches_attachments(self):
+        barrier = threading.Barrier(2)
+
+        def fetch_side_effect(item_key):
+            barrier.wait(timeout=1)
+            item = self._paper_item()
+            item["data"]["key"] = item_key
+            return item
+
+        with (
+            patch("zoty.db._fetch_item_detail", side_effect=fetch_side_effect) as fetch_mock,
+            patch(
+                "zoty.db._get_item_attachments_by_parent",
+                return_value={"GOOD1": [], "GOOD2": []},
+            ) as attachments_mock,
+        ):
+            result = json.loads(db.get_item(item_keys=["good1", "good2"]))
+
+        self.assertEqual(result["total"], 2)
+        self.assertNotIn("errors", result)
+        self.assertEqual(fetch_mock.call_count, 2)
+        self.assertEqual(attachments_mock.call_count, 1)
+        attachments_mock.assert_called_once_with(["GOOD1", "GOOD2"])
 
     def test_list_collections_returns_structured_error_skeleton_for_fetch_failure(self):
         with patch("zoty.db._get_zot", side_effect=RuntimeError("boom")):
