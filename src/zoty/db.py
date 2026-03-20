@@ -38,6 +38,7 @@ _CACHE_CONTENT_TYPES = {
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
+_LIST_VIEW_MAX_CREATORS = 5
 
 @dataclass
 class _ParentRecord:
@@ -135,6 +136,16 @@ def _format_creators(creators: list[dict]) -> list[str]:
     return names
 
 
+def _truncate_creator_names(creators: list[str], *, max_creators: int = _LIST_VIEW_MAX_CREATORS) -> list[str]:
+    """Keep list/search payloads compact by capping long author lists."""
+    if max_creators < 0 or len(creators) <= max_creators:
+        return list(creators)
+
+    truncated = list(creators[:max_creators])
+    truncated.append(f"... and {len(creators) - max_creators} more")
+    return truncated
+
+
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
@@ -153,6 +164,22 @@ def _now_iso() -> str:
 
 def _normalize_plain_text(text: str) -> str:
     return " ".join(text.split())
+
+
+def _normalize_item_date(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not normalized:
+        return ""
+
+    parts = normalized.split(" ")
+    if (
+        len(parts) == 2
+        and parts[0] == parts[1]
+        and re.fullmatch(r"\d{4}-\d{2}-\d{2}", parts[0]) is not None
+    ):
+        return parts[0]
+
+    return normalized
 
 
 def _extract_query_terms(query: str) -> list[str]:
@@ -286,11 +313,45 @@ def _get_item_attachment_count(item_key: str) -> int:
     return int(row["count"]) if row else 0
 
 
+def _get_item_attachment_counts(item_keys: list[str]) -> dict[str, int]:
+    """Return attachment counts for many parent items in one query."""
+    normalized_keys: list[str] = []
+    for item_key in item_keys:
+        cleaned = item_key.strip()
+        if cleaned and cleaned not in normalized_keys:
+            normalized_keys.append(cleaned)
+
+    if not normalized_keys:
+        return {}
+
+    placeholders = ",".join("?" for _ in normalized_keys)
+    counts = {key: 0 for key in normalized_keys}
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            rows = conn.execute(
+                f"""SELECT parent.key, COUNT(*) AS count
+                    FROM itemAttachments ia
+                    JOIN items parent ON parent.itemID = ia.parentItemID
+                    WHERE parent.key IN ({placeholders})
+                    GROUP BY parent.key""",
+                normalized_keys,
+            ).fetchall()
+    except Exception:
+        return counts
+
+    for row in rows:
+        counts[str(row["key"])] = int(row["count"])
+
+    return counts
+
+
 def _item_to_dict(
     item: dict,
     truncate_abstract: int = 0,
     *,
     include_attachments: bool = False,
+    max_creators: int = -1,
 ) -> dict:
     """Convert a pyzotero item to a concise dict for tool output."""
     data = item.get("data", {})
@@ -305,7 +366,10 @@ def _item_to_dict(
         "key": data.get("key", ""),
         "itemType": data.get("itemType", ""),
         "title": data.get("title", ""),
-        "creators": _format_creators(data.get("creators", [])),
+        "creators": _truncate_creator_names(
+            _format_creators(data.get("creators", [])),
+            max_creators=max_creators,
+        ),
         "date": data.get("date", ""),
         "DOI": data.get("DOI", ""),
         "url": data.get("url", ""),
@@ -587,7 +651,7 @@ def _fetch_parent_records() -> dict[str, _ParentRecord]:
             elif field_name == "abstractNote":
                 parent.abstract = value
             elif field_name == "date":
-                parent.date = value
+                parent.date = _normalize_item_date(value)
             elif field_name == "DOI":
                 parent.doi = value
             elif field_name == "url":
@@ -1473,19 +1537,20 @@ def _result_from_parent(
     score: float,
     best_doc: dict[str, Any],
     query_terms: list[str],
+    attachment_count: int,
 ) -> dict[str, Any]:
     result = {
         "key": parent["key"],
         "itemType": parent["itemType"],
         "title": parent["title"],
-        "creators": list(parent["creators"]),
+        "creators": _truncate_creator_names(parent["creators"]),
         "date": parent["date"],
         "DOI": parent["DOI"],
         "url": parent["url"],
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachment_count": _get_item_attachment_count(parent["key"]),
+        "attachment_count": attachment_count,
         "score": round(score, 4),
     }
 
@@ -1648,12 +1713,14 @@ def search(
 
         batch_size = min(max_docs, batch_size * 2)
 
+    attachment_counts = _get_item_attachment_counts(list(best_by_parent))
     results_payload = [
         _result_from_parent(
             state.parents[parent_key],
             score=score,
             best_doc=doc,
             query_terms=query_terms,
+            attachment_count=attachment_counts.get(parent_key, 0),
         )
         for parent_key, (score, doc) in best_by_parent.items()
     ]
@@ -1850,7 +1917,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
     result = []
     for item in items:
         data = item.get("data", {})
-        if data.get("itemType") in ("attachment", "note"):
+        if data.get("itemType") in _SKIP_TYPES:
             continue
         item_collections = {
             key.upper()
@@ -1859,7 +1926,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         }
         if normalized_collection_key not in item_collections:
             continue
-        result.append(_item_to_dict(item, truncate_abstract=500))
+        result.append(_item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS))
 
     return json.dumps({
         "collection_key": normalized_collection_key,
@@ -1947,5 +2014,8 @@ def get_recent_items(limit: int = 10) -> str:
     except Exception as exc:
         return json.dumps({"error": f"Failed to fetch recent items: {exc}"})
 
-    result = [_item_to_dict(item, truncate_abstract=500) for item in items]
+    result = [
+        _item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS)
+        for item in items
+    ]
     return json.dumps({"items": result, "total": len(result)})

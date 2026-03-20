@@ -79,6 +79,12 @@ class DbTestCase(unittest.TestCase):
             }
         }
 
+    def _creator_dicts(self, count: int) -> list[dict[str, str]]:
+        return [
+            {"firstName": f"Author{index + 1}", "lastName": "Example"}
+            for index in range(count)
+        ]
+
     def _install_search_state(self, docs, *, parents=None):
         if parents is None:
             parents = {
@@ -194,6 +200,19 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["attachments"][0]["filepath"], str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"))
         self.assertEqual(result["attachments"][0]["contentType"], "application/pdf")
 
+    def test_get_item_preserves_full_creator_list(self):
+        zot = Mock()
+        item = self._paper_item()
+        item["data"]["creators"] = self._creator_dicts(7)
+        zot.item.return_value = item
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_item("PARENT1"))
+
+        self.assertEqual(len(result["creators"]), 7)
+        self.assertEqual(result["creators"][0], "Author1 Example")
+        self.assertEqual(result["creators"][-1], "Author7 Example")
+
     def test_get_item_rejects_empty_item_key(self):
         with patch("zoty.db._get_zot") as get_zot_mock:
             result = json.loads(db.get_item(""))
@@ -230,6 +249,95 @@ class AttachmentPathsTests(DbTestCase):
         self.assertEqual(result["results"][0]["attachment_count"], 1)
         self.assertNotIn("attachments", result["results"][0])
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+
+    def test_search_batches_attachment_count_lookups_for_multiple_results(self):
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.execute(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                (3, "PARENT2", "2026-03-10 10:02:00"),
+            )
+            conn.execute(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                (4, "ATTACH2", "2026-03-10 10:03:00"),
+            )
+            conn.execute(
+                "INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)",
+                (2, "Attached EPUB"),
+            )
+            conn.execute(
+                "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                (4, 1, 2),
+            )
+            conn.execute(
+                """INSERT INTO itemAttachments(itemID, parentItemID, linkMode, contentType, path)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (4, 3, 1, "application/epub+zip", "storage:book.epub"),
+            )
+            conn.commit()
+
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Example Paper",
+                "abstract": "Example abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2026-03-10",
+                "DOI": "10.1000/example",
+                "url": "https://example.org/paper",
+            },
+            "PARENT2": {
+                "key": "PARENT2",
+                "dateModified": "2026-03-11 10:00:00",
+                "itemType": "preprint",
+                "title": "Second Paper",
+                "abstract": "Second abstract.",
+                "creators": ["John Example"],
+                "collections": ["COLL456"],
+                "tags": ["biology"],
+                "date": "2026-03-11",
+                "DOI": "",
+                "url": "",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "example result one",
+                "text_hash": "hash-1",
+            }, 4.0),
+            ({
+                "doc_id": "meta:PARENT2",
+                "parent_key": "PARENT2",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "example result two",
+                "text_hash": "hash-2",
+            }, 3.5),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        with patch("zoty.db._open_zotero_db", wraps=db._open_zotero_db) as open_db_mock:
+            result = json.loads(db.search("example", limit=2))
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([row["key"] for row in result["results"]], ["PARENT1", "PARENT2"])
+        self.assertEqual([row["attachment_count"] for row in result["results"]], [1, 1])
+        self.assertEqual(open_db_mock.call_count, 1)
 
 
 class CollectionItemTests(DbTestCase):
@@ -297,6 +405,20 @@ class CollectionItemTests(DbTestCase):
                     "abstractNote": "",
                 }
             },
+            {
+                "data": {
+                    "key": "ANNOT1",
+                    "itemType": "annotation",
+                    "title": "Annotation",
+                    "creators": [],
+                    "date": "",
+                    "DOI": "",
+                    "url": "",
+                    "tags": [],
+                    "collections": ["COLL123"],
+                    "abstractNote": "",
+                }
+            },
         ]
 
         with patch("zoty.db._get_zot", return_value=zot):
@@ -308,6 +430,177 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
         self.assertEqual(result["items"][0]["title"], "First Paper")
         zot.collection_items.assert_called_once_with("COLL123", limit=5)
+
+    def test_list_collection_items_truncates_long_creator_lists(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}}
+        ]
+        zot.collection_items.return_value = [
+            {
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "preprint",
+                    "title": "First Paper",
+                    "creators": self._creator_dicts(7),
+                    "date": "2026-03-10",
+                    "DOI": "10.1000/one",
+                    "url": "https://example.org/one",
+                    "tags": [{"tag": "chemistry"}],
+                    "collections": ["COLL123"],
+                    "abstractNote": "First abstract.",
+                }
+            },
+        ]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=5))
+
+        self.assertEqual(
+            result["items"][0]["creators"],
+            [
+                "Author1 Example",
+                "Author2 Example",
+                "Author3 Example",
+                "Author4 Example",
+                "Author5 Example",
+                "... and 2 more",
+            ],
+        )
+
+
+class RecentItemsTests(DbTestCase):
+    def test_get_recent_items_truncates_long_creator_lists(self):
+        zot = Mock()
+        item = self._paper_item()
+        item["data"]["creators"] = self._creator_dicts(8)
+        zot.items.return_value = [item]
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(
+            result["items"][0]["creators"],
+            [
+                "Author1 Example",
+                "Author2 Example",
+                "Author3 Example",
+                "Author4 Example",
+                "Author5 Example",
+                "... and 3 more",
+            ],
+        )
+
+
+class ParentRecordDateNormalizationTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    version INTEGER,
+                    dateModified TEXT,
+                    itemTypeID INTEGER NOT NULL,
+                    libraryID INTEGER
+                );
+                CREATE TABLE itemTypesCombined (
+                    itemTypeID INTEGER PRIMARY KEY,
+                    typeName TEXT NOT NULL
+                );
+                CREATE TABLE deletedItems (
+                    itemID INTEGER PRIMARY KEY
+                );
+                CREATE TABLE fields (
+                    fieldID INTEGER PRIMARY KEY,
+                    fieldName TEXT NOT NULL
+                );
+                CREATE TABLE itemDataValues (
+                    valueID INTEGER PRIMARY KEY,
+                    value TEXT UNIQUE
+                );
+                CREATE TABLE itemData (
+                    itemID INTEGER NOT NULL,
+                    fieldID INTEGER NOT NULL,
+                    valueID INTEGER NOT NULL
+                );
+                CREATE TABLE itemCreators (
+                    itemID INTEGER NOT NULL,
+                    creatorID INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL
+                );
+                CREATE TABLE creators (
+                    creatorID INTEGER PRIMARY KEY,
+                    firstName TEXT,
+                    lastName TEXT,
+                    fieldMode INTEGER
+                );
+                CREATE TABLE collectionItems (
+                    collectionID INTEGER NOT NULL,
+                    itemID INTEGER NOT NULL,
+                    orderIndex INTEGER NOT NULL
+                );
+                CREATE TABLE collections (
+                    collectionID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL
+                );
+                CREATE TABLE itemTags (
+                    itemID INTEGER NOT NULL,
+                    tagID INTEGER NOT NULL
+                );
+                CREATE TABLE tags (
+                    tagID INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                """INSERT INTO itemTypesCombined(itemTypeID, typeName)
+                   VALUES (?, ?)""",
+                (1, "preprint"),
+            )
+            conn.execute(
+                """INSERT INTO items(itemID, key, version, dateModified, itemTypeID, libraryID)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (1, "PARENT1", 3, "2026-03-10 10:00:00", 1, 1),
+            )
+            conn.executemany(
+                "INSERT INTO fields(fieldID, fieldName) VALUES (?, ?)",
+                [
+                    (1, "title"),
+                    (2, "date"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)",
+                [
+                    (1, "Normalized Date Paper"),
+                    (2, "2025-09-17 2025-09-17"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                [
+                    (1, 1, 1),
+                    (1, 2, 2),
+                ],
+            )
+            conn.commit()
+
+    def test_normalize_item_date_collapses_duplicate_iso_dates_only(self):
+        self.assertEqual(db._normalize_item_date("2025-09-17 2025-09-17"), "2025-09-17")
+        self.assertEqual(db._normalize_item_date(" 2025-09-17   2025-09-17 "), "2025-09-17")
+        self.assertEqual(db._normalize_item_date("2025-09-17 2025-10-01"), "2025-09-17 2025-10-01")
+        self.assertEqual(db._normalize_item_date("Spring 2025 Spring 2025"), "Spring 2025 Spring 2025")
+
+    def test_fetch_parent_records_normalizes_duplicated_date_field(self):
+        parents = db._fetch_parent_records()
+
+        self.assertEqual(parents["PARENT1"].date, "2025-09-17")
+        self.assertEqual(parents["PARENT1"].title, "Normalized Date Paper")
 
 
 class SearchBehaviorTests(DbTestCase):
@@ -405,6 +698,50 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["results"][0]["key"], "PARENT1")
         self.assertIn("meatpotatoes", result["results"][0]["snippet"].lower())
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
+
+    def test_search_truncates_long_creator_lists(self):
+        attachment_doc = {
+            "doc_id": "chunk:ATTACH1:0",
+            "parent_key": "PARENT1",
+            "attachment_key": "ATTACH1",
+            "doc_kind": "attachment_chunk",
+            "chunk_index": 0,
+            "char_start": 0,
+            "char_end": 80,
+            "token_count": 12,
+            "text": "This body text contains meatpotatoes evidence deep in the paper body.",
+            "text_hash": "hash-body",
+        }
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Example Paper",
+                "abstract": "Example abstract.",
+                "creators": [f"Author {index + 1}" for index in range(7)],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2026-03-10",
+                "DOI": "10.1000/example",
+                "url": "https://example.org/paper",
+            }
+        }
+        self._install_search_state([(attachment_doc, 7.25)], parents=parents)
+
+        result = json.loads(db.search("meatpotatoes"))
+
+        self.assertEqual(
+            result["results"][0]["creators"],
+            [
+                "Author 1",
+                "Author 2",
+                "Author 3",
+                "Author 4",
+                "Author 5",
+                "... and 2 more",
+            ],
+        )
 
     def test_metadata_query_uses_abstract_snippet_without_attachment_key(self):
         metadata_doc = {
