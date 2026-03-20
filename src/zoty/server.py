@@ -51,8 +51,8 @@ def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
         limit: Maximum number of passage matches to return (default: 5)
 
     Returns:
-        JSON with the item metadata plus ranked within-item matches, including
-        snippets and attachment context for chunk hits.
+        JSON with a minimal item summary plus ranked within-item matches,
+        including snippets and attachment context for chunk hits.
     """
     return db.search_within_item(item_key=item_key, query=query, limit=limit)
 

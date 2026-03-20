@@ -1528,16 +1528,7 @@ def _search_response(
 def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
     return {
         "key": parent["key"],
-        "itemType": parent["itemType"],
         "title": parent["title"],
-        "creators": list(parent["creators"]),
-        "date": parent["date"],
-        "DOI": parent["DOI"],
-        "url": parent["url"],
-        "tags": list(parent["tags"]),
-        "collections": list(parent["collections"]),
-        "abstract": parent["abstract"],
-        "attachments": _get_item_attachments(parent["key"]),
     }
 
 
@@ -1740,10 +1731,9 @@ def search_within_item(
             "total": 0,
         })
 
-    attachments = item_summary["attachments"]
     attachments_by_key = {
         attachment["key"]: attachment
-        for attachment in attachments
+        for attachment in _get_item_attachments(parent["key"])
     }
 
     max_docs = len(state.corpus_docs)

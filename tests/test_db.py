@@ -697,7 +697,9 @@ class SearchBehaviorTests(DbTestCase):
         result = json.loads(db.search_within_item("parent1", "query", limit=3))
 
         self.assertEqual(result["item_key"], "PARENT1")
-        self.assertEqual(result["item"]["key"], "PARENT1")
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "First Paper"})
+        self.assertNotIn("abstract", result["item"])
+        self.assertNotIn("attachments", result["item"])
         self.assertEqual(result["total"], 3)
         self.assertEqual(
             [row["match_type"] for row in result["results"]],
@@ -706,6 +708,28 @@ class SearchBehaviorTests(DbTestCase):
         self.assertEqual(result["results"][0]["attachment_key"], "ATTACH1")
         self.assertEqual(result["results"][1]["attachment_key"], "ATTACH2")
         self.assertNotIn("attachment_key", result["results"][2])
+
+    def test_search_within_item_returns_lean_item_summary_when_query_has_no_terms(self):
+        self._install_search_state([
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "query match first",
+                "text_hash": "hash-1",
+            }, 7.0),
+        ])
+
+        result = json.loads(db.search_within_item("parent1", "the and", limit=3))
+
+        self.assertEqual(result["item"], {"key": "PARENT1", "title": "Example Paper"})
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
 
     def test_search_within_item_returns_error_for_unknown_item(self):
         self._install_search_state([
