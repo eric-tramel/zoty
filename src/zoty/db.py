@@ -38,6 +38,7 @@ _CACHE_CONTENT_TYPES = {
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
+_LIST_VIEW_MAX_CREATORS = 5
 
 @dataclass
 class _ParentRecord:
@@ -133,6 +134,16 @@ def _format_creators(creators: list[dict]) -> list[str]:
         elif name:
             names.append(name)
     return names
+
+
+def _truncate_creator_names(creators: list[str], *, max_creators: int = _LIST_VIEW_MAX_CREATORS) -> list[str]:
+    """Keep list/search payloads compact by capping long author lists."""
+    if max_creators < 0 or len(creators) <= max_creators:
+        return list(creators)
+
+    truncated = list(creators[:max_creators])
+    truncated.append(f"... and {len(creators) - max_creators} more")
+    return truncated
 
 
 def _json_dumps(value: Any) -> str:
@@ -340,6 +351,7 @@ def _item_to_dict(
     truncate_abstract: int = 0,
     *,
     include_attachments: bool = False,
+    max_creators: int = -1,
 ) -> dict:
     """Convert a pyzotero item to a concise dict for tool output."""
     data = item.get("data", {})
@@ -354,7 +366,10 @@ def _item_to_dict(
         "key": data.get("key", ""),
         "itemType": data.get("itemType", ""),
         "title": data.get("title", ""),
-        "creators": _format_creators(data.get("creators", [])),
+        "creators": _truncate_creator_names(
+            _format_creators(data.get("creators", [])),
+            max_creators=max_creators,
+        ),
         "date": data.get("date", ""),
         "DOI": data.get("DOI", ""),
         "url": data.get("url", ""),
@@ -1528,7 +1543,7 @@ def _result_from_parent(
         "key": parent["key"],
         "itemType": parent["itemType"],
         "title": parent["title"],
-        "creators": list(parent["creators"]),
+        "creators": _truncate_creator_names(parent["creators"]),
         "date": parent["date"],
         "DOI": parent["DOI"],
         "url": parent["url"],
@@ -1580,7 +1595,7 @@ def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
         "key": parent["key"],
         "itemType": parent["itemType"],
         "title": parent["title"],
-        "creators": list(parent["creators"]),
+        "creators": _truncate_creator_names(parent["creators"]),
         "date": parent["date"],
         "DOI": parent["DOI"],
         "url": parent["url"],
@@ -1921,7 +1936,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         }
         if normalized_collection_key not in item_collections:
             continue
-        result.append(_item_to_dict(item, truncate_abstract=500))
+        result.append(_item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS))
 
     return json.dumps({
         "collection_key": normalized_collection_key,
@@ -2009,5 +2024,8 @@ def get_recent_items(limit: int = 10) -> str:
     except Exception as exc:
         return json.dumps({"error": f"Failed to fetch recent items: {exc}"})
 
-    result = [_item_to_dict(item, truncate_abstract=500) for item in items]
+    result = [
+        _item_to_dict(item, truncate_abstract=500, max_creators=_LIST_VIEW_MAX_CREATORS)
+        for item in items
+    ]
     return json.dumps({"items": result, "total": len(result)})
