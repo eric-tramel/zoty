@@ -46,7 +46,9 @@ def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
     """BM25 ranked passage search within one Zotero item.
 
     Args:
-        item_key: Zotero parent item key to search within
+        item_key: Zotero parent item key to search within. Use the `key`
+            field from `search_library`, `list_collection_items`, or
+            `get_recent_items` results (for example, `X9KJ2M4P`).
         query: Search keywords to match against that item's metadata and attachment chunks
         limit: Maximum number of passage matches to return (default: 5)
 
@@ -86,7 +88,9 @@ def get_item(item_key: str) -> str:
     """Get full metadata for a single Zotero item.
 
     Args:
-        item_key: The Zotero item key
+        item_key: The Zotero item key. Use the `key` field from
+            `search_library`, `list_collection_items`, or `get_recent_items`
+            results (for example, `X9KJ2M4P`).
 
     Returns:
         JSON with complete item metadata including title, creators, abstract,
@@ -105,8 +109,12 @@ def get_bibtex_and_citation_for_items(
     """Get BibTeX, citation text, and bibliography text for one or more Zotero items.
 
     Args:
-        item_key: A single Zotero item key, typically returned by search_library
-        item_keys: Optional list of Zotero item keys, typically returned by search_library
+        item_key: A single Zotero item key. Use the `key` field from
+            `search_library`, `list_collection_items`, or `get_recent_items`
+            results (for example, `X9KJ2M4P`).
+        item_keys: Optional list of Zotero item keys. Use the `key` field from
+            `search_library`, `list_collection_items`, or `get_recent_items`
+            results (for example, `X9KJ2M4P`).
         style: Citation style to use for formatted citation and bibliography text
         locale: Citation locale to use for formatted citation and bibliography text
 
