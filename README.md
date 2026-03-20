@@ -126,14 +126,16 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 
 | Tool | Description |
 |------|-------------|
-| `search_library` | BM25-ranked search over title, abstract, and indexed attachment full text, aggregated back to parent items with optional plain-text snippets, attachment counts, filters for collection or item type, and explicit limit-cap metadata |
-| `search_within_item` | BM25-ranked passage search within one Zotero item, returning top metadata or attachment-chunk matches with snippets, attachment context, and a minimal item summary |
+| `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text, with optional plain-text snippets, attachment counts, collection filtering, and case-insensitive item type values like `journalArticle`, `preprint`, `conferencePaper`, `book`, `bookSection`, `thesis`, `report`, and `webpage` |
+| `search_within_item` | Find which passages within one known item match a keyword query, using `search_library` results to drill into a specific paper while returning ranked metadata or attachment-chunk matches with snippets and attachment context |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
-| `get_item` | Full metadata for a single item by `key`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results |
-| `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for one `key` or a list of `key` values, typically from `search_library`, `list_collection_items`, or `get_recent_items` |
+| `get_item` | Full metadata for a single item by `key`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. It includes the full untruncated abstract and attachment filepaths, so use it when the full abstract is needed |
+| `get_bibtex_and_citation_for_items` | BibTeX plus formatted citation and bibliography text for a single `item_key` or batch `item_keys`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. Both can be combined and at least one must be provided |
 | `get_recent_items` | Recently added items, sorted by date |
 | `add_paper` | Add a paper by arXiv ID or DOI with automatic PDF download and collection-scoped duplicate prevention |
+
+Attachment payloads include `linkMode` as a descriptive string (`imported_file`, `imported_url`, `linked_file`, or `linked_url`) instead of Zotero's internal numeric codes.
 
 ## How it works
 

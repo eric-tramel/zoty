@@ -2,6 +2,7 @@ from contextlib import closing
 import json
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -69,6 +70,42 @@ class ArxivRateLimiterTests(unittest.TestCase):
 
         self.assertEqual(starts, [("fail", 0.0), ("success", 3.2)])
         self.assertEqual(clock.sleeps, [3.0])
+
+    def test_serialized_rate_limiter_releases_lock_during_call(self):
+        limiter = connector._SerializedRateLimiter(min_interval=0.0)
+        started = threading.Event()
+        release = threading.Event()
+        done = threading.Event()
+        errors = []
+
+        def blocking_call():
+            started.set()
+            release.wait(timeout=1.0)
+            return "ok"
+
+        def worker():
+            try:
+                limiter.run(blocking_call)
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(exc)
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        self.assertTrue(started.wait(timeout=1.0))
+
+        # If run() holds _lock during func(), this acquire times out.
+        acquired = limiter._lock.acquire(timeout=0.1)
+        if acquired:
+            limiter._lock.release()
+
+        release.set()
+        self.assertTrue(done.wait(timeout=1.0))
+        thread.join(timeout=1.0)
+
+        self.assertTrue(acquired)
+        self.assertEqual(errors, [])
 
     def test_sliding_window_rate_limiter_allows_burst_then_waits(self):
         clock = FakeClock()
@@ -160,6 +197,32 @@ class ArxivRateLimiterTests(unittest.TestCase):
             "https://example.org/paper.pdf",
             "/tmp/example.pdf",
         )
+
+
+class DownloadPdfSecurityTests(unittest.TestCase):
+    def test_download_pdf_uses_mkstemp_and_closes_fd(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            temp_pdf = tmpdir_path / "download.pdf"
+
+            def fake_download(_url, path):
+                Path(path).write_bytes(b"x" * 2000)
+
+            with (
+                patch("zoty.connector.tempfile.mkstemp", return_value=(17, str(temp_pdf))) as mkstemp_mock,
+                patch("zoty.connector.tempfile.mktemp", side_effect=AssertionError("mktemp should not be used")),
+                patch("zoty.connector.os.close") as close_mock,
+                patch("zoty.connector._download_with_rate_limit", side_effect=fake_download),
+                patch("zoty.connector._zotero_key", return_value="ATTACH1"),
+                patch("zoty.connector._ZOTERO_STORAGE", tmpdir_path),
+            ):
+                result = connector._download_pdf("https://example.org/paper.pdf", "paper.pdf")
+                self.assertEqual(result[0], "ATTACH1")
+                self.assertEqual(result[2], 2000)
+                self.assertEqual(result[1], tmpdir_path / "ATTACH1" / "paper.pdf")
+                self.assertTrue(result[1].exists())
+                mkstemp_mock.assert_called_once_with(suffix=".pdf")
+                close_mock.assert_called_once_with(17)
 
 
 class CollectionAssignmentRetryTests(unittest.TestCase):

@@ -20,12 +20,16 @@ def search_library(
     item_type: str = "",
     limit: int = 10,
 ) -> str:
-    """BM25 ranked search over title, abstract, and indexed attachment full text.
+    """Find which items in your Zotero library match a keyword query.
+
+    Uses BM25 ranking over title, abstract, and indexed attachment full text.
 
     Args:
         query: Search keywords (e.g. "transformer attention" not "what papers discuss attention?")
         collection_key: Optional Zotero collection key to filter results
-        item_type: Optional item type filter (e.g. "journalArticle", "preprint", "conferencePaper")
+        item_type: Optional Zotero item type filter, case-insensitive
+            (e.g. "journalArticle", "preprint", "conferencePaper", "book",
+            "bookSection", "thesis", "report", "webpage")
         limit: Maximum results to return (default: 10)
 
     Returns:
@@ -43,7 +47,9 @@ def search_library(
 
 @mcp_server.tool()
 def search_within_item(item_key: str, query: str, limit: int = 5) -> str:
-    """BM25 ranked passage search within one Zotero item.
+    """Find which passages within one known item match a keyword query.
+
+    Use after `search_library` to drill into a specific paper.
 
     Args:
         item_key: Zotero parent item key to search within. Use the `key`
@@ -93,8 +99,10 @@ def get_item(item_key: str) -> str:
             results (for example, `X9KJ2M4P`).
 
     Returns:
-        JSON with complete item metadata including title, creators, abstract,
-        date, DOI, URL, tags, collections, and attachment filepaths.
+        JSON with complete item metadata including the full untruncated abstract,
+        title, creators, date, DOI, URL, tags, collections, and attachment
+        filepaths. Search results already include most fields, so use this only
+        when the full abstract is needed.
     """
     return db.get_item(item_key)
 
@@ -109,13 +117,16 @@ def get_bibtex_and_citation_for_items(
     """Get BibTeX, citation text, and bibliography text for one or more Zotero items.
 
     Args:
-        item_key: A single Zotero item key. Use the `key` field from
+        item_key: A single Zotero item key for one item. Use the `key` field from
             `search_library`, `list_collection_items`, or `get_recent_items`
             results (for example, `X9KJ2M4P`).
-        item_keys: Optional list of Zotero item keys. Use the `key` field from
+        item_keys: A list of Zotero item keys for batch use. Use the `key` field from
             `search_library`, `list_collection_items`, or `get_recent_items`
-            results (for example, `X9KJ2M4P`).
-        style: Citation style to use for formatted citation and bibliography text
+            results (for example, `X9KJ2M4P`). item_key and item_keys can be
+            combined, and at least one must be provided.
+        style: CSL style ID to use for formatted citation and bibliography text (for example,
+            'apa', 'ieee', or 'chicago-note-bibliography'); see the Zotero Style Repository
+            for the full list
         locale: Citation locale to use for formatted citation and bibliography text
 
     Returns:
