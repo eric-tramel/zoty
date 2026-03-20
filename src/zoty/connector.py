@@ -464,7 +464,10 @@ def _fetch_arxiv_metadata(arxiv_id: str) -> dict:
     if entry is None:
         raise ValueError(f"No arXiv entry found for ID: {arxiv_id}")
 
+    entry_id = (entry.findtext(f"{_ATOM}id") or "").strip()
     title = (entry.findtext(f"{_ATOM}title") or "").strip().replace("\n", " ")
+    if not title or "api/errors" in entry_id or title.lower() == "error":
+        raise ValueError(f"Invalid arXiv ID: {arxiv_id}. No paper found.")
     abstract = (entry.findtext(f"{_ATOM}summary") or "").strip().replace("\n", " ")
     published = (entry.findtext(f"{_ATOM}published") or "")[:10]
 
@@ -771,5 +774,7 @@ def add_paper(arxiv_id: str = "", doi: str = "", collection_key: str = "") -> st
         if "Connection refused" in str(e) or "localhost" in str(e):
             return json.dumps({"error": "Cannot reach Zotero connector at localhost:23119. Is Zotero running?"})
         return json.dumps({"error": f"Failed to fetch metadata from {source}: {e}"})
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
     except Exception as e:
         return json.dumps({"error": f"Failed to add paper: {e}"})
