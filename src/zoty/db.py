@@ -39,6 +39,12 @@ _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
 _LIST_VIEW_MAX_CREATORS = 5
+_LINK_MODE_LABELS = {
+    0: "imported_file",
+    1: "imported_url",
+    2: "linked_file",
+    3: "linked_url",
+}
 
 @dataclass
 class _ParentRecord:
@@ -195,6 +201,13 @@ def _safe_int(value: Any) -> int | None:
         return None
 
 
+def _format_link_mode(value: Any) -> str:
+    mode = _safe_int(value)
+    if mode is None:
+        return "unknown"
+    return _LINK_MODE_LABELS.get(mode, f"unknown({mode})")
+
+
 def _safe_file_stats(path_str: str) -> tuple[int | None, int | None]:
     if not path_str:
         return None, None
@@ -285,7 +298,7 @@ def _get_item_attachments(item_key: str) -> list[dict]:
             "key": attachment_key,
             "title": title,
             "contentType": content_type or "",
-            "linkMode": link_mode,
+            "linkMode": _format_link_mode(link_mode),
             "filepath": filepath,
         })
 
