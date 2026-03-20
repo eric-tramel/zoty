@@ -37,6 +37,7 @@ _CACHE_CONTENT_TYPES = {
 }
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
+_SEARCH_RESULT_LIMIT_CAP = 25
 
 
 @dataclass
@@ -263,6 +264,27 @@ def _get_item_attachments(item_key: str) -> list[dict]:
         })
 
     return attachments
+
+
+def _get_item_attachment_count(item_key: str) -> int:
+    """Return the number of attachments linked to one parent item."""
+    key = item_key.strip()
+    if not key:
+        return 0
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            row = conn.execute(
+                """SELECT COUNT(*) AS count
+                   FROM itemAttachments ia
+                   JOIN items parent ON parent.itemID = ia.parentItemID
+                   WHERE parent.key = ?""",
+                (key,),
+            ).fetchone()
+    except Exception:
+        return 0
+
+    return int(row["count"]) if row else 0
 
 
 def _item_to_dict(
@@ -1452,7 +1474,7 @@ def _result_from_parent(
         "tags": list(parent["tags"]),
         "collections": list(parent["collections"]),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
-        "attachments": _get_item_attachments(parent["key"]),
+        "attachment_count": _get_item_attachment_count(parent["key"]),
         "score": round(score, 4),
     }
 
@@ -1468,6 +1490,28 @@ def _result_from_parent(
 
     result["_date_modified"] = parent["dateModified"]
     return result
+
+
+def _search_response(
+    query: str,
+    results: list[dict[str, Any]],
+    *,
+    requested_limit: int,
+    applied_limit: int,
+    error: str | None = None,
+) -> str:
+    response: dict[str, Any] = {
+        "results": results,
+        "query": query,
+        "total": len(results),
+        "requested_limit": requested_limit,
+        "applied_limit": applied_limit,
+        "limit_cap": _SEARCH_RESULT_LIMIT_CAP,
+        "limit_capped": requested_limit > applied_limit,
+    }
+    if error is not None:
+        response["error"] = error
+    return json.dumps(response)
 
 
 def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
@@ -1523,25 +1567,28 @@ def search(
     limit: int = 10,
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
-    limit = max(1, limit)
+    requested_limit = max(1, limit)
+    applied_limit = min(requested_limit, _SEARCH_RESULT_LIMIT_CAP)
 
     with _index_lock:
         state = _search_state
 
     if state is None:
-        return json.dumps({
-            "error": "Index is still building, please retry in a moment",
-            "results": [],
-            "query": query,
-            "total": 0,
-        })
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
+            error="Index is still building, please retry in a moment",
+        )
 
     if state.retriever is None or not state.corpus_docs:
-        return json.dumps({
-            "results": [],
-            "query": query,
-            "total": 0,
-        })
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
+        )
 
     query_tokens = bm25s.tokenize(
         [query],
@@ -1551,14 +1598,15 @@ def search(
     )
     query_terms = _extract_query_terms(query)
     if not query_terms or not query_tokens or not query_tokens[0]:
-        return json.dumps({
-            "results": [],
-            "query": query,
-            "total": 0,
-        })
+        return _search_response(
+            query,
+            [],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
+        )
 
     max_docs = len(state.corpus_docs)
-    batch_size = min(max(limit * 20, 200), max_docs)
+    batch_size = min(max(applied_limit * 20, 200), max_docs)
     best_by_parent: dict[str, tuple[float, dict[str, Any]]] = {}
 
     while batch_size > 0:
@@ -1589,7 +1637,7 @@ def search(
             if previous is None or score > previous[0]:
                 best_by_parent[parent_key] = (score, doc)
 
-            if len(best_by_parent) >= limit:
+            if len(best_by_parent) >= applied_limit:
                 found_enough = True
                 break
 
@@ -1611,15 +1659,16 @@ def search(
     results_payload.sort(key=lambda row: row["key"])
     results_payload.sort(key=lambda row: row["_date_modified"], reverse=True)
     results_payload.sort(key=lambda row: row["score"], reverse=True)
-    results_payload = results_payload[:limit]
+    results_payload = results_payload[:applied_limit]
     for row in results_payload:
         row.pop("_date_modified", None)
 
-    return json.dumps({
-        "results": results_payload,
-        "query": query,
-        "total": len(results_payload),
-    })
+    return _search_response(
+        query,
+        results_payload,
+        requested_limit=requested_limit,
+        applied_limit=applied_limit,
+    )
 
 
 def search_within_item(
