@@ -156,6 +156,58 @@ def _format_creators(creators: list[dict]) -> list[str]:
     return names
 
 
+def _load_collection_name_map() -> dict[str, str]:
+    """Load collection keys and names from the local Zotero database."""
+    name_by_key: dict[str, str] = {}
+
+    try:
+        with closing(_open_zotero_db()) as conn:
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(collections)")
+                if row["name"]
+            }
+            if "key" not in columns:
+                return name_by_key
+
+            if "collectionName" in columns:
+                name_column = "collectionName"
+            elif "name" in columns:
+                name_column = "name"
+            else:
+                return name_by_key
+
+            for row in conn.execute(f"SELECT key, {name_column} AS collection_name FROM collections"):
+                key = str(row["key"] or "").strip().upper()
+                if not key:
+                    continue
+                name_by_key[key] = str(row["collection_name"] or "")
+    except Exception:
+        return name_by_key
+
+    return name_by_key
+
+
+def _collection_refs(
+    collection_keys: list[str],
+    *,
+    collection_name_by_key: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    refs: list[dict[str, str]] = []
+    name_by_key = collection_name_by_key or {}
+
+    for collection_key in collection_keys:
+        normalized_key = str(collection_key or "").strip().upper()
+        if not normalized_key:
+            continue
+        refs.append({
+            "key": normalized_key,
+            "name": name_by_key.get(normalized_key, ""),
+        })
+
+    return refs
+
+
 def _truncate_creator_names(creators: list[str], *, max_creators: int = _LIST_VIEW_MAX_CREATORS) -> list[str]:
     """Keep list/search payloads compact by capping long author lists."""
     if max_creators < 0 or len(creators) <= max_creators:
@@ -425,6 +477,7 @@ def _item_to_dict(
     max_creators: int = -1,
     attachments: list[dict[str, Any]] | None = None,
     attachment_count: int | None = None,
+    collection_name_by_key: dict[str, str] | None = None,
 ) -> dict:
     """Convert a pyzotero item to a concise dict for tool output."""
     data = item.get("data", {})
@@ -432,7 +485,10 @@ def _item_to_dict(
     if truncate_abstract > 0 and len(abstract) > truncate_abstract:
         abstract = abstract[:truncate_abstract] + "..."
 
-    collections = data.get("collections", [])
+    collections = _collection_refs(
+        [key for key in data.get("collections", []) if isinstance(key, str)],
+        collection_name_by_key=collection_name_by_key,
+    )
     tags = [tag.get("tag", "") for tag in data.get("tags", []) if tag.get("tag")]
 
     result = {
@@ -1862,6 +1918,7 @@ def _result_from_parent(
     query_terms: list[str],
     attachment_count: int,
     attachments: list[dict[str, Any]] | None = None,
+    collection_name_by_key: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     date_value = _normalize_item_date(str(parent.get("date", "") or ""))
     result = {
@@ -1873,7 +1930,10 @@ def _result_from_parent(
         "DOI": parent["DOI"],
         "url": parent["url"],
         "tags": list(parent["tags"]),
-        "collections": list(parent["collections"]),
+        "collections": _collection_refs(
+            list(parent["collections"]),
+            collection_name_by_key=collection_name_by_key,
+        ),
         "abstract": parent["abstract"][:500] + "..." if len(parent["abstract"]) > 500 else parent["abstract"],
         "attachment_count": attachment_count,
         "score": round(score, 4),
@@ -2059,6 +2119,7 @@ def search(
 ) -> str:
     """BM25 ranked search over titles, abstracts, and indexed attachment full text."""
     requested_limit, applied_limit = _apply_limit_cap(limit, _SEARCH_RESULT_LIMIT_CAP)
+    collection_name_by_key = _load_collection_name_map()
     normalized_collection_key = collection_key.strip().upper()
     normalized_item_type = item_type.strip().lower()
 
@@ -2195,6 +2256,7 @@ def search(
             query_terms=query_terms,
             attachment_count=attachment_counts.get(parent_key, 0),
             attachments=attachments_by_parent.get(parent_key) if include_attachments else None,
+            collection_name_by_key=collection_name_by_key,
         )
         for parent_key, (score, doc) in best_by_parent.items()
     ]
@@ -2502,6 +2564,17 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
     try:
         zot = _get_zot()
         collections = zot.collections()
+        collection_name_by_key = _load_collection_name_map()
+        for collection in collections:
+            data = collection.get("data", {})
+            key = str(data.get("key", "") or "").strip().upper()
+            if not key:
+                continue
+            collection_name_by_key[key] = str(
+                data.get("name", "")
+                or data.get("collectionName", "")
+                or collection_name_by_key.get(key, "")
+            )
         collection_found = any(
             collection.get("data", {}).get("key", "").upper() == normalized_collection_key
             for collection in collections
@@ -2552,6 +2625,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
                 truncate_abstract=500,
                 include_attachment_count=True,
                 max_creators=_LIST_VIEW_MAX_CREATORS,
+                collection_name_by_key=collection_name_by_key,
             )
         )
 
@@ -2578,6 +2652,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
         return json.dumps(_error_payload("Provide item_key"))
 
     attachments_by_parent = _get_item_attachments_by_parent(requested_keys)
+    collection_name_by_key = _load_collection_name_map()
 
     if len(requested_keys) == 1:
         normalized_item_key = requested_keys[0]
@@ -2598,6 +2673,7 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
                 include_attachments=True,
                 max_creators=_DETAIL_VIEW_MAX_CREATORS,
                 attachments=attachments_by_parent.get(normalized_item_key, []),
+                collection_name_by_key=collection_name_by_key,
             )
         )
 
@@ -2622,8 +2698,9 @@ def get_item(item_key: str = "", item_keys: list[str] | None = None) -> str:
                     item,
                     truncate_abstract=0,
                     include_attachments=True,
-                    max_creators=_DETAIL_VIEW_MAX_CREATORS,
+                    max_creators=_LIST_VIEW_MAX_CREATORS,
                     attachments=attachments_by_parent.get(key, []),
+                    collection_name_by_key=collection_name_by_key,
                 )
             )
 
@@ -2737,6 +2814,7 @@ def get_recent_items(limit: int = 10) -> str:
             "error": f"Failed to fetch recent items: {exc}",
         })
 
+    collection_name_by_key = _load_collection_name_map()
     result = [
         _item_to_dict(
             item,
@@ -2744,6 +2822,7 @@ def get_recent_items(limit: int = 10) -> str:
             include_attachment_count=True,
             include_date_added=True,
             max_creators=_LIST_VIEW_MAX_CREATORS,
+            collection_name_by_key=collection_name_by_key,
         )
         for item in items
     ]
