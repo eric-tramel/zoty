@@ -81,10 +81,13 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
 
     Args:
         collection_key: The Zotero collection key (from list_collections)
-        limit: Maximum items to return (default: 50)
+        limit: Requested items to return before the cap is applied (default: 50)
 
     Returns:
-        JSON with item metadata for each item in the collection.
+        JSON with `collection_key`, `collection_found`, `items`, and limit
+        metadata. Each item includes `key`, `title`, `creators`, `date`,
+        truncated `abstract` (500 chars), `attachments`, and other summary
+        fields.
     """
     return db.list_collection_items(collection_key, limit=limit)
 
@@ -146,10 +149,12 @@ def get_recent_items(limit: int = 10) -> str:
     """Get recently added items from the Zotero library, sorted by date added.
 
     Args:
-        limit: Maximum items to return (default: 10)
+        limit: Requested items to return before the cap is applied (default: 10)
 
     Returns:
-        JSON with item metadata for recently added items.
+        JSON with `items`, `total`, and limit metadata. Each item includes
+        `key`, `title`, `creators`, `date`, truncated `abstract` (500 chars),
+        `attachments`, and other summary fields.
     """
     return db.get_recent_items(limit=limit)
 

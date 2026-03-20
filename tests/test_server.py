@@ -77,6 +77,16 @@ class ServerToolTests(unittest.TestCase):
             "Find which passages within one known item match a keyword query.",
         )
 
+    def test_list_and_recent_tool_docstrings_describe_fields_and_caps(self):
+        list_doc = " ".join(server.list_collection_items.__doc__.split())
+        recent_doc = " ".join(server.get_recent_items.__doc__.split())
+        self.assertIn("Requested items to return before the cap is applied", list_doc)
+        self.assertIn("JSON with `collection_key`, `collection_found`, `items`, and limit metadata.", list_doc)
+        self.assertIn("truncated `abstract` (500 chars)", list_doc)
+        self.assertIn("Requested items to return before the cap is applied", recent_doc)
+        self.assertIn("JSON with `items`, `total`, and limit metadata.", recent_doc)
+        self.assertIn("truncated `abstract` (500 chars)", recent_doc)
+
     def test_search_library_delegates_to_db(self):
         with patch.object(server.db, "search", return_value='{"results": []}') as db_mock:
             result = server.search_library(

@@ -38,6 +38,7 @@ _CACHE_CONTENT_TYPES = {
 _CHUNK_WORDS = 200
 _CHUNK_OVERLAP_WORDS = 40
 _SEARCH_RESULT_LIMIT_CAP = 25
+_LIST_RESULT_LIMIT_CAP = 100
 _LIST_VIEW_MAX_CREATORS = 5
 _EMPTY_QUERY_WARNING = "Query produced no searchable terms after stop-word removal. Try more specific keywords."
 _LINK_MODE_LABELS = {
@@ -1626,6 +1627,20 @@ def _search_response(
     return json.dumps(response)
 
 
+def _apply_limit_cap(limit: int, cap: int) -> tuple[int, int]:
+    requested_limit = max(1, limit)
+    return requested_limit, min(requested_limit, cap)
+
+
+def _limit_response_metadata(requested_limit: int, applied_limit: int, cap: int) -> dict[str, Any]:
+    return {
+        "requested_limit": requested_limit,
+        "applied_limit": applied_limit,
+        "limit_cap": cap,
+        "limit_capped": requested_limit > applied_limit,
+    }
+
+
 def _item_summary_from_parent(parent: dict[str, Any]) -> dict[str, Any]:
     return {
         "key": parent["key"],
@@ -1916,7 +1931,7 @@ def list_collections() -> str:
 
 def list_collection_items(collection_key: str, limit: int = 50) -> str:
     """Return items in a specific collection."""
-    limit = max(1, limit)
+    requested_limit, applied_limit = _apply_limit_cap(limit, _LIST_RESULT_LIMIT_CAP)
     normalized_collection_key = collection_key.strip().upper()
     if not normalized_collection_key:
         return json.dumps({
@@ -1924,6 +1939,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
             "collection_found": False,
             "items": [],
             "total": 0,
+            **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             "error": "Provide collection_key",
         })
 
@@ -1940,15 +1956,17 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
                 "collection_found": False,
                 "items": [],
                 "total": 0,
+                **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
                 "error": f"Collection {normalized_collection_key} was not found",
             })
-        items = zot.collection_items(normalized_collection_key, limit=limit)
+        items = zot.collection_items(normalized_collection_key, limit=applied_limit)
     except Exception as exc:
         return json.dumps({
             "collection_key": normalized_collection_key,
             "collection_found": False,
             "items": [],
             "total": 0,
+            **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             "error": f"Failed to fetch collection items: {exc}",
         })
 
@@ -1978,6 +1996,7 @@ def list_collection_items(collection_key: str, limit: int = 50) -> str:
         "collection_found": True,
         "items": result,
         "total": len(result),
+        **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
     })
 
 
@@ -2051,17 +2070,22 @@ def get_bibtex_and_citation_for_items(
 
 def get_recent_items(limit: int = 10) -> str:
     """Recently added items, sorted by dateAdded descending."""
-    limit = max(1, limit)
+    requested_limit, applied_limit = _apply_limit_cap(limit, _LIST_RESULT_LIMIT_CAP)
     try:
         zot = _get_zot()
         items = zot.items(
-            limit=limit * 3,
+            limit=applied_limit * 3,
             sort="dateAdded",
             direction="desc",
         )
-        items = [item for item in items if item.get("data", {}).get("itemType") not in _SKIP_TYPES][:limit]
+        items = [item for item in items if item.get("data", {}).get("itemType") not in _SKIP_TYPES][:applied_limit]
     except Exception as exc:
-        return json.dumps({"items": [], "total": 0, "error": f"Failed to fetch recent items: {exc}"})
+        return json.dumps({
+            "items": [],
+            "total": 0,
+            **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
+            "error": f"Failed to fetch recent items: {exc}",
+        })
 
     result = [
         _item_to_dict(
@@ -2072,4 +2096,8 @@ def get_recent_items(limit: int = 10) -> str:
         )
         for item in items
     ]
-    return json.dumps({"items": result, "total": len(result)})
+    return json.dumps({
+        "items": result,
+        "total": len(result),
+        **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
+    })
