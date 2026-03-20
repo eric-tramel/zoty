@@ -2293,28 +2293,6 @@ def search_within_item(
             item=item_summary,
         )
 
-    if applied_limit == 0:
-        if multi_item:
-            warning = None
-            if missing_item_keys:
-                warning = (
-                    "Some requested item keys were not found in the search index: "
-                    + ", ".join(missing_item_keys)
-                )
-            return _search_within_item_response(
-                query=query,
-                matches=[],
-                item_keys=found_item_keys,
-                items=items_summary,
-                missing_item_keys=missing_item_keys,
-                warning=warning,
-            )
-        return _search_within_item_response(
-            key=normalized_item_key,
-            query=query,
-            matches=[],
-            item=item_summary,
-        )
     query_tokens = bm25s.tokenize(
         [query],
         stopwords="en",
@@ -2350,7 +2328,7 @@ def search_within_item(
             warning=_EMPTY_QUERY_WARNING,
         )
 
-    if limit == 0:
+    if applied_limit == 0:
         if multi_item:
             warning = None
             if missing_item_keys:
@@ -2361,8 +2339,10 @@ def search_within_item(
             return _search_within_item_response(
                 query=query,
                 matches=[],
+                requested_limit=requested_limit,
+                applied_limit=applied_limit,
                 item_keys=found_item_keys,
-                items=items_summary,
+                items=_multi_item_summaries_from_matches(found_item_keys, state.parents, []),
                 missing_item_keys=missing_item_keys,
                 warning=warning,
             )
@@ -2370,6 +2350,8 @@ def search_within_item(
             key=normalized_item_key,
             query=query,
             matches=[],
+            requested_limit=requested_limit,
+            applied_limit=applied_limit,
             item=item_summary,
         )
 
