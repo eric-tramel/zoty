@@ -74,13 +74,14 @@ def search_within_item(
         limit: Maximum number of passage matches to return (default: 5)
 
     Returns:
-        JSON with ranked passage `matches`, including `snippet`, `chunk_index`,
-        `char_start`, and `char_end` for every hit. When a match comes from an
-        attachment chunk, it also includes `attachment_key`,
-        `attachment_title`, and `attachment_filepath` so you can identify the
-        source file for that passage. Single-item calls return `key` and `item`;
-        multi-item calls return `item_keys` and `items`. Each match uses `key`
-        for the parent item.
+        JSON with ranked passage `matches`, including `snippet`,
+        `chunk_index`, `char_start`, and `char_end` for every hit. When a
+        match comes from an attachment chunk, it also includes
+        `attachment_key`, `attachment_title`, and `attachment_filepath` so you
+        can identify the source file for that passage. Single-item calls
+        return `key` and `item`; multi-item calls return `item_keys` and
+        `items`. Matches omit the redundant parent title and include parent
+        `key` only for multi-item calls.
     """
     return db.search_within_item(
         item_key=item_key,

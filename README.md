@@ -127,7 +127,7 @@ The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No conf
 | Tool | Description |
 |------|-------------|
 | `search_library` | Find which items in your Zotero library match a keyword query, ranked by BM25 over title, abstract, and indexed attachment full text, with optional plain-text snippets, attachment counts, collection filtering, and case-insensitive item type values like `journalArticle`, `preprint`, `conferencePaper`, `book`, `bookSection`, `thesis`, `report`, and `webpage` |
-| `search_within_item` | Find which passages within one known item match a keyword query, using `search_library` results to drill into a specific paper while returning ranked metadata or attachment-chunk matches with snippets and attachment context |
+| `search_within_item` | Find which passages within one or more known items match a keyword query, using `search_library` results to drill into a specific paper or compare several papers; top-level item summaries carry parent titles, and per-match parent `key` is only repeated for multi-item ranking |
 | `list_collections` | List all collections with keys, names, and item counts |
 | `list_collection_items` | List items in a specific collection |
 | `get_item` | Full metadata for a single item by `key`; use the `key` field from `search_library`, `list_collection_items`, or `get_recent_items` results. It includes the full untruncated abstract and attachment filepaths, so use it when the full abstract is needed |
