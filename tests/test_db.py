@@ -183,11 +183,19 @@ class AttachmentPathsTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Attached PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "paper.pdf"),
                 }
             ],
         )
+
+    def test_format_link_mode_maps_known_and_unknown_values(self):
+        self.assertEqual(db._format_link_mode(0), "imported_file")
+        self.assertEqual(db._format_link_mode(1), "imported_url")
+        self.assertEqual(db._format_link_mode(2), "linked_file")
+        self.assertEqual(db._format_link_mode(3), "linked_url")
+        self.assertEqual(db._format_link_mode(99), "unknown(99)")
+        self.assertEqual(db._format_link_mode(None), "unknown")
 
     def test_get_item_includes_attachment_filepaths(self):
         zot = Mock()
@@ -485,7 +493,7 @@ class CollectionItemTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Collection PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "collection.pdf"),
                 }
             ],
@@ -759,7 +767,7 @@ class RecentItemsTests(DbTestCase):
                     "key": "ATTACH1",
                     "title": "Recent PDF",
                     "contentType": "application/pdf",
-                    "linkMode": 0,
+                    "linkMode": "imported_file",
                     "filepath": str(db._ZOTERO_STORAGE / "ATTACH1" / "recent.pdf"),
                 }
             ],
