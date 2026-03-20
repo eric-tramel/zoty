@@ -91,8 +91,10 @@ def get_item(item_key: str) -> str:
         item_key: The Zotero item key
 
     Returns:
-        JSON with complete item metadata including title, creators, abstract,
-        date, DOI, URL, tags, collections, and attachment filepaths.
+        JSON with complete item metadata including the full untruncated abstract,
+        title, creators, date, DOI, URL, tags, collections, and attachment
+        filepaths. Search results already include most fields, so use this only
+        when the full abstract is needed.
     """
     return db.get_item(item_key)
 
