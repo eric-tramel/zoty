@@ -231,6 +231,95 @@ class AttachmentPathsTests(DbTestCase):
         self.assertNotIn("attachments", result["results"][0])
         self.assertEqual(result["results"][0]["snippet_attachment_key"], "ATTACH1")
 
+    def test_search_batches_attachment_count_lookups_for_multiple_results(self):
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.execute(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                (3, "PARENT2", "2026-03-10 10:02:00"),
+            )
+            conn.execute(
+                "INSERT INTO items(itemID, key, dateAdded) VALUES (?, ?, ?)",
+                (4, "ATTACH2", "2026-03-10 10:03:00"),
+            )
+            conn.execute(
+                "INSERT INTO itemDataValues(valueID, value) VALUES (?, ?)",
+                (2, "Attached EPUB"),
+            )
+            conn.execute(
+                "INSERT INTO itemData(itemID, fieldID, valueID) VALUES (?, ?, ?)",
+                (4, 1, 2),
+            )
+            conn.execute(
+                """INSERT INTO itemAttachments(itemID, parentItemID, linkMode, contentType, path)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (4, 3, 1, "application/epub+zip", "storage:book.epub"),
+            )
+            conn.commit()
+
+        parents = {
+            "PARENT1": {
+                "key": "PARENT1",
+                "dateModified": "2026-03-10 10:00:00",
+                "itemType": "preprint",
+                "title": "Example Paper",
+                "abstract": "Example abstract.",
+                "creators": ["Jane Example"],
+                "collections": ["COLL123"],
+                "tags": ["chemistry"],
+                "date": "2026-03-10",
+                "DOI": "10.1000/example",
+                "url": "https://example.org/paper",
+            },
+            "PARENT2": {
+                "key": "PARENT2",
+                "dateModified": "2026-03-11 10:00:00",
+                "itemType": "preprint",
+                "title": "Second Paper",
+                "abstract": "Second abstract.",
+                "creators": ["John Example"],
+                "collections": ["COLL456"],
+                "tags": ["biology"],
+                "date": "2026-03-11",
+                "DOI": "",
+                "url": "",
+            },
+        }
+        docs = [
+            ({
+                "doc_id": "meta:PARENT1",
+                "parent_key": "PARENT1",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "example result one",
+                "text_hash": "hash-1",
+            }, 4.0),
+            ({
+                "doc_id": "meta:PARENT2",
+                "parent_key": "PARENT2",
+                "attachment_key": "",
+                "doc_kind": "metadata",
+                "chunk_index": 0,
+                "char_start": 0,
+                "char_end": 20,
+                "token_count": 3,
+                "text": "example result two",
+                "text_hash": "hash-2",
+            }, 3.5),
+        ]
+        self._install_search_state(docs, parents=parents)
+
+        with patch("zoty.db._open_zotero_db", wraps=db._open_zotero_db) as open_db_mock:
+            result = json.loads(db.search("example", limit=2))
+
+        self.assertEqual(result["total"], 2)
+        self.assertEqual([row["key"] for row in result["results"]], ["PARENT1", "PARENT2"])
+        self.assertEqual([row["attachment_count"] for row in result["results"]], [1, 1])
+        self.assertEqual(open_db_mock.call_count, 1)
+
 
 class CollectionItemTests(DbTestCase):
     def test_list_collection_items_returns_structured_error_for_invalid_key(self):
