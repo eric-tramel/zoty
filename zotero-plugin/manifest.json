@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zoty Bridge",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "description": "Activates the Gecko DevTools Server for remote JavaScript execution via RDP.",
   "applications": {
     "zotero": {

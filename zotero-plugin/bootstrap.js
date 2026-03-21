@@ -65,7 +65,7 @@ function handleRequest(data, output) {
     var body = bodyIdx !== -1 ? data.substring(bodyIdx + 4) : "";
 
     if (method === "GET" && path === "/status") {
-      sendHTTP(output, 200, JSON.stringify({ status: "ok", version: "0.2.1" }));
+      sendHTTP(output, 200, JSON.stringify({ status: "ok", version: "0.2.0" }));
       return;
     }
 
