@@ -1120,6 +1120,90 @@ class ParentRecordDateNormalizationTests(DbTestCase):
         self.assertEqual(parents["PARENT1"].title, "Normalized Date Paper")
 
 
+class AttachmentRecordFetchTests(DbTestCase):
+    def setUp(self):
+        super().setUp()
+        with closing(sqlite3.connect(db._ZOTERO_DB)) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE items (
+                    itemID INTEGER PRIMARY KEY,
+                    key TEXT NOT NULL,
+                    version INTEGER
+                );
+                CREATE TABLE itemAttachments (
+                    itemID INTEGER PRIMARY KEY,
+                    parentItemID INT,
+                    linkMode INT,
+                    contentType TEXT,
+                    path TEXT,
+                    storageModTime INT,
+                    storageHash TEXT,
+                    lastProcessedModificationTime INT
+                );
+                CREATE TABLE fulltextItems (
+                    itemID INTEGER PRIMARY KEY,
+                    indexedPages INT,
+                    totalPages INT,
+                    indexedChars INT,
+                    totalChars INT,
+                    version INT
+                );
+                """
+            )
+            conn.executemany(
+                "INSERT INTO items(itemID, key, version) VALUES (?, ?, ?)",
+                [
+                    (1, "PARENT1", 3),
+                    (2, "ATTACH1", 4),
+                    (3, "STANDALONE", 5),
+                ],
+            )
+            conn.executemany(
+                """INSERT INTO itemAttachments(
+                       itemID, parentItemID, linkMode, contentType, path,
+                       storageModTime, storageHash, lastProcessedModificationTime
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (2, 1, 0, "application/pdf", "storage:paper.pdf", None, "", None),
+                    (3, None, 0, "application/pdf", "storage:standalone.pdf", None, "", None),
+                ],
+            )
+            conn.execute(
+                """INSERT INTO fulltextItems(
+                       itemID, indexedPages, totalPages, indexedChars, totalChars, version
+                   ) VALUES (?, ?, ?, ?, ?, ?)""",
+                (2, None, None, None, 1, 28),
+            )
+            conn.commit()
+
+    def test_fetch_attachment_records_ignores_standalone_attachments(self):
+        parents = {
+            "PARENT1": db._ParentRecord(
+                parent_key="PARENT1",
+                parent_item_id=1,
+                item_version=3,
+                date_modified="2026-03-10 10:00:00",
+                item_type="preprint",
+                title="Parent Paper",
+                abstract="",
+                creators=[],
+                collections=[],
+                tags=[],
+                date="2026-03-10",
+                doi="",
+                url="",
+                metadata_hash="parent-hash",
+            )
+        }
+
+        attachments = db._fetch_attachment_records(parents)
+
+        self.assertEqual(list(attachments), ["ATTACH1"])
+        self.assertIsNone(attachments["ATTACH1"].indexed_chars)
+        self.assertEqual(attachments["ATTACH1"].total_chars, 1)
+
+
 class RecentItemsTests(DbTestCase):
     def setUp(self):
         super().setUp()

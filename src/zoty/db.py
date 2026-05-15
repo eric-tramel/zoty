@@ -1124,6 +1124,8 @@ def _fetch_attachment_records(parents: dict[str, _ParentRecord]) -> dict[str, _A
                JOIN items child ON child.itemID = ia.itemID
                LEFT JOIN fulltextItems fi ON fi.itemID = ia.itemID"""
         ):
+            if row["parent_item_id"] is None:
+                continue
             parent_item_id = int(row["parent_item_id"])
             if parent_item_id not in parent_item_ids:
                 continue
