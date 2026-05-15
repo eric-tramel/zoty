@@ -120,6 +120,31 @@ A tiny Zotero 7/8 plugin that lets zoty execute JavaScript inside Zotero's privi
 2. In Zotero: Tools > Add-ons > gear icon > Install Add-on From File > select the `.xpi`
 3. Restart Zotero
 
+For local development, you can also install the built XPI from the command line. Quit Zotero first, then run this from the repository root:
+
+```bash
+ZOTERO_PROFILE="$(
+  python3 - <<'PY'
+from configparser import ConfigParser
+from pathlib import Path
+
+root = Path.home() / "Library/Application Support/Zotero"
+profiles = ConfigParser()
+profiles.read(root / "profiles.ini")
+
+for section in profiles.sections():
+    if section.startswith("Profile") and profiles.get(section, "Default", fallback="0") == "1":
+        path = Path(profiles.get(section, "Path"))
+        print(root / path if profiles.get(section, "IsRelative", fallback="1") == "1" else path)
+        break
+else:
+    raise SystemExit("No default Zotero profile found")
+PY
+)"
+mkdir -p "$ZOTERO_PROFILE/extensions"
+cp zotero-plugin/dist/zoty-bridge.xpi "$ZOTERO_PROFILE/extensions/zoty-bridge@zoty.dev.xpi"
+```
+
 The bridge runs an HTTP server on `localhost:24119` when Zotero is open. No configuration needed.
 
 ## Tools
