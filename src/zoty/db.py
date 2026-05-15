@@ -15,7 +15,7 @@ import shutil
 import sqlite3
 import sys
 import threading
-from typing import Any
+from typing import Any, Callable
 import urllib.parse
 
 import bm25s
@@ -2168,6 +2168,44 @@ def _count_non_skipped_top_level_items_for_zot(zot: zotero.Zotero) -> int:
     return _count_non_skipped_top_level_items(zot.everything(zot.top()))
 
 
+def _fetch_filtered_item_page_results(
+    fetch_page: Callable[..., list[dict[str, Any]]],
+    applied_limit: int,
+    include_item: Callable[[dict[str, Any]], bool],
+    *,
+    sort: str | None = None,
+    direction: str | None = None,
+) -> list[dict[str, Any]]:
+    if applied_limit <= 0:
+        return []
+
+    page_size = min(100, max(applied_limit * 3, 25))
+    start = 0
+    results: list[dict[str, Any]] = []
+    while len(results) < applied_limit:
+        kwargs: dict[str, Any] = {"limit": page_size, "start": start}
+        if sort is not None:
+            kwargs["sort"] = sort
+        if direction is not None:
+            kwargs["direction"] = direction
+
+        page = fetch_page(**kwargs)
+        if not page:
+            break
+
+        for item in page:
+            if include_item(item):
+                results.append(item)
+                if len(results) >= applied_limit:
+                    break
+
+        if len(page) < page_size:
+            break
+        start += len(page)
+
+    return results[:applied_limit]
+
+
 def search(
     query: str,
     collection_key: str = "",
@@ -2672,7 +2710,19 @@ def list_collection_items(collection_key: str, limit: int = 25) -> str:
                 "returned_count": 0,
                 **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             })
-        items = zot.collection_items(normalized_collection_key, limit=applied_limit)
+        items = _fetch_filtered_item_page_results(
+            lambda **kwargs: zot.collection_items(normalized_collection_key, **kwargs),
+            applied_limit,
+            lambda item: (
+                item.get("data", {}).get("itemType") not in _SKIP_TYPES
+                and normalized_collection_key
+                in {
+                    key.upper()
+                    for key in item.get("data", {}).get("collections", [])
+                    if isinstance(key, str)
+                }
+            ),
+        )
     except Exception as exc:
         return json.dumps({
             "collection_key": normalized_collection_key,
@@ -2687,15 +2737,6 @@ def list_collection_items(collection_key: str, limit: int = 25) -> str:
     result = []
     for item in items:
         data = item.get("data", {})
-        if data.get("itemType") in _SKIP_TYPES:
-            continue
-        item_collections = {
-            key.upper()
-            for key in data.get("collections", [])
-            if isinstance(key, str)
-        }
-        if normalized_collection_key not in item_collections:
-            continue
         result.append(
             _item_to_dict(
                 item,
@@ -2879,12 +2920,13 @@ def get_recent_items(limit: int = 10) -> str:
                 "returned_count": 0,
                 **_limit_response_metadata(requested_limit, applied_limit, _LIST_RESULT_LIMIT_CAP),
             })
-        items = zot.items(
-            limit=applied_limit * 3,
+        items = _fetch_filtered_item_page_results(
+            zot.items,
+            applied_limit,
+            lambda item: item.get("data", {}).get("itemType") not in _SKIP_TYPES,
             sort="dateAdded",
             direction="desc",
         )
-        items = [item for item in items if item.get("data", {}).get("itemType") not in _SKIP_TYPES][:applied_limit]
     except Exception as exc:
         return json.dumps({
             "items": [],

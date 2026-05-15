@@ -816,7 +816,7 @@ class CollectionItemTests(DbTestCase):
         self.assertEqual(result["items"][0]["attachment_count"], 1)
         self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertNotIn("attachments", result["items"][0])
-        zot.collection_items.assert_called_once_with("COLL123", limit=5)
+        zot.collection_items.assert_called_once_with("COLL123", limit=25, start=0)
 
     def test_list_collection_items_caps_requested_limit_and_reports_metadata(self):
         zot = Mock()
@@ -849,7 +849,7 @@ class CollectionItemTests(DbTestCase):
         self.assertTrue(result["limit_capped"])
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["returned_count"], 1)
-        zot.collection_items.assert_called_once_with("COLL123", limit=db._LIST_RESULT_LIMIT_CAP)
+        zot.collection_items.assert_called_once_with("COLL123", limit=75, start=0)
 
     def test_list_collection_items_preserves_zero_requested_limit_and_skips_item_fetch(self):
         zot = Mock()
@@ -910,8 +910,54 @@ class CollectionItemTests(DbTestCase):
             ],
         )
 
+    def test_list_collection_items_fetches_past_skipped_first_page(self):
+        zot = Mock()
+        zot.collections.return_value = [
+            {"data": {"key": "COLL123", "name": "Valid Collection"}, "meta": {"numItems": 1}}
+        ]
+        skipped_page = [
+            {
+                "data": {
+                    "key": f"ATTACH{index}",
+                    "itemType": "attachment",
+                    "collections": ["COLL123"],
+                }
+            }
+            for index in range(25)
+        ]
+        parent_item = {
+            "data": {
+                "key": "ITEM1",
+                "itemType": "preprint",
+                "title": "First Paper",
+                "creators": [{"firstName": "Jane", "lastName": "Example"}],
+                "date": "2026-03-10",
+                "DOI": "10.1000/one",
+                "url": "https://example.org/one",
+                "tags": [{"tag": "chemistry"}],
+                "collections": ["COLL123"],
+                "abstractNote": "First abstract.",
+            }
+        }
 
-class RecentItemsTests(DbTestCase):
+        def collection_items_side_effect(collection_key, **kwargs):
+            self.assertEqual(collection_key, "COLL123")
+            if kwargs["start"] == 0:
+                return skipped_page
+            if kwargs["start"] == 25:
+                return [parent_item]
+            return []
+
+        zot.collection_items.side_effect = collection_items_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.list_collection_items("coll123", limit=1))
+
+        self.assertEqual([row["key"] for row in result["items"]], ["ITEM1"])
+        self.assertEqual(result["returned_count"], 1)
+
+
+class RecentItemsLimitTests(DbTestCase):
     def test_get_recent_items_truncates_long_creator_lists(self):
         zot = Mock()
         item = self._paper_item()
@@ -967,10 +1013,42 @@ class RecentItemsTests(DbTestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["returned_count"], 1)
         zot.items.assert_called_once_with(
-            limit=db._LIST_RESULT_LIMIT_CAP * 3,
+            limit=75,
+            start=0,
             sort="dateAdded",
             direction="desc",
         )
+
+    def test_get_recent_items_fetches_past_skipped_first_page(self):
+        zot = Mock()
+        zot.top.return_value = [
+            {"data": {"itemType": "preprint"}},
+            {"data": {"itemType": "attachment"}},
+        ]
+        zot.everything.return_value = [
+            {"data": {"itemType": "preprint"}},
+            {"data": {"itemType": "attachment"}},
+        ]
+        skipped_page = [
+            {"data": {"key": f"ATTACH{index}", "itemType": "attachment"}}
+            for index in range(25)
+        ]
+        parent_item = self._paper_item()
+
+        def items_side_effect(**kwargs):
+            if kwargs["start"] == 0:
+                return skipped_page
+            if kwargs["start"] == 25:
+                return [parent_item]
+            return []
+
+        zot.items.side_effect = items_side_effect
+
+        with patch("zoty.db._get_zot", return_value=zot):
+            result = json.loads(db.get_recent_items(limit=1))
+
+        self.assertEqual([row["key"] for row in result["items"]], ["PARENT1"])
+        self.assertEqual(result["returned_count"], 1)
 
     def test_get_recent_items_preserves_zero_requested_limit_and_reports_total(self):
         zot = Mock()
@@ -1310,7 +1388,7 @@ class RecentItemsTests(DbTestCase):
         self.assertEqual(result["items"][0]["date_added"], "2026-03-10T10:00:00")
         self.assertEqual(result["items"][0]["collections"], [{"key": "COLL123", "name": "Valid Collection"}])
         self.assertNotIn("attachments", result["items"][0])
-        zot.items.assert_called_once_with(limit=3, sort="dateAdded", direction="desc")
+        zot.items.assert_called_once_with(limit=25, start=0, sort="dateAdded", direction="desc")
 
 
 class SearchBehaviorTests(DbTestCase):
