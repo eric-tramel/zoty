@@ -109,7 +109,7 @@ sudo apt-get install poppler-utils
 
 ## Zoty Bridge Plugin
 
-A tiny Zotero 7/8 plugin that lets zoty execute JavaScript inside Zotero's privileged context. This is needed for operations that can't go through the REST API: PDF attachment and collection assignment both require writing to Zotero's SQLite database, which locks out external processes. The bridge sidesteps this by running JS inside Zotero itself.
+A tiny Zotero 7/8/9 plugin that lets zoty execute JavaScript inside Zotero's privileged context. This is needed for operations that can't go through the REST API: PDF attachment and collection assignment both require writing to Zotero's SQLite database, which locks out external processes. The bridge sidesteps this by running JS inside Zotero itself.
 
 ### Install the plugin
 
@@ -176,6 +176,17 @@ arXiv traffic is throttled internally to respect arXiv's access policy. Concurre
 make build   # build zotero-plugin/dist/zoty-bridge.xpi
 make test    # run Python unit tests
 ```
+
+With Zotero running and zoty-bridge installed, run the local MCP smoke test:
+
+```bash
+uv run scripts/smoke_mcp.py
+```
+
+The smoke test is intentionally not part of `make test` because it depends on
+the local Zotero profile and library contents. See the script docstring for
+environment variables that pin item/collection keys or opt into duplicate-only
+`add_paper` testing.
 
 ## License
 
