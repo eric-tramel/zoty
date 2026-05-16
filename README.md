@@ -113,14 +113,22 @@ A tiny Zotero 7/8/9 plugin that lets zoty execute JavaScript inside Zotero's pri
 
 ### Install the plugin
 
-1. Download `zoty-bridge.xpi` from [releases](https://github.com/eric-tramel/zoty/releases), or build it yourself:
+1. Download `zoty-bridge.xpi` from the [latest release](https://github.com/eric-tramel/zoty/releases/latest), or build it yourself:
    ```bash
    make build
    ```
-2. In Zotero: Tools > Add-ons > gear icon > Install Add-on From File > select the `.xpi`
-3. Restart Zotero
+2. In Zotero: Tools > Plugins, then drag `zoty-bridge.xpi` onto the Plugins window.
+3. Restart Zotero.
+4. Confirm the bridge is running:
+   ```bash
+   curl http://127.0.0.1:24119/status
+   ```
 
-For local development, you can also install the built XPI from the command line. Quit Zotero first, then run this from the repository root:
+Current bridge releases include a Zotero update manifest, so future bridge updates can be detected by Zotero after this XPI is installed.
+
+If you upgraded to Zotero 9 with an older bridge capped at Zotero 8, Zotero may show the bridge as disabled. Install the latest `zoty-bridge.xpi` from the Plugins window, restart Zotero, and enable the bridge if Zotero leaves it disabled after reinstalling.
+
+For local development only, you can also install the built XPI from the command line. Quit Zotero first, then run this from the repository root:
 
 ```bash
 ZOTERO_PROFILE="$(
@@ -173,9 +181,12 @@ arXiv traffic is throttled internally to respect arXiv's access policy. Concurre
 ## Development
 
 ```bash
-make build   # build zotero-plugin/dist/zoty-bridge.xpi
+make build          # build zotero-plugin/dist/zoty-bridge.xpi and zoty-bridge-updates.json
+make verify-build   # rebuild plugin artifacts and fail if committed artifacts are stale
 make test    # run Python unit tests
 ```
+
+Release authors should follow [RELEASING.md](RELEASING.md). The bridge XPI and Zotero update manifest are deterministic build outputs and are checked by CI.
 
 With Zotero running and zoty-bridge installed, run the local MCP smoke test:
 

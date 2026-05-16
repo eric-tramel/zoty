@@ -1,4 +1,4 @@
-/* Zoty Bridge — bootstrap plugin for Zotero 7 and 8.
+/* Zoty Bridge — bootstrap plugin for Zotero 7, 8, and 9.
  *
  * Exposes a minimal HTTP endpoint on localhost that accepts JavaScript code
  * via POST and evaluates it inside Zotero's privileged context. This lets
@@ -13,6 +13,7 @@ const PREF_ENABLED = "extensions.zoty-bridge.enabled";
 const PREF_PORT = "extensions.zoty-bridge.port";
 
 let serverSocket = null;
+let pluginVersion = "unknown";
 
 function log(msg) {
   Zotero.debug("[zoty-bridge] " + msg);
@@ -65,7 +66,7 @@ function handleRequest(data, output) {
     var body = bodyIdx !== -1 ? data.substring(bodyIdx + 4) : "";
 
     if (method === "GET" && path === "/status") {
-      sendHTTP(output, 200, JSON.stringify({ status: "ok", version: "0.2.0" }));
+      sendHTTP(output, 200, JSON.stringify({ status: "ok", version: pluginVersion }));
       return;
     }
 
@@ -171,9 +172,10 @@ function stopServer() {
   }
 }
 
-// --- Zotero 7/8 bootstrap lifecycle ---
+// --- Zotero 7/8/9 bootstrap lifecycle ---
 
 function startup(data, reason) {
+  pluginVersion = data && data.version ? data.version : "unknown";
   log("Starting v" + data.version + " (reason=" + reason + ")");
   Zotero.uiReadyPromise.then(function() { startServer(); });
 }

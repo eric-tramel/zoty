@@ -14,7 +14,9 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install build .
-      - run: make build
+      - run: make release-build RELEASE_TAG="${GITHUB_REF_NAME}"
+      - run: git diff --exit-code -- zotero-plugin/dist/zoty-bridge.xpi zotero-plugin/dist/zoty-bridge-updates.json
+      - run: python -m compileall src scripts tests
       - run: make test
       - run: python -m build
       - uses: actions/upload-artifact@v4
@@ -23,8 +25,10 @@ jobs:
           path: dist/*
       - uses: actions/upload-artifact@v4
         with:
-          name: zotero-plugin-xpi
-          path: zotero-plugin/dist/zoty-bridge.xpi
+          name: zotero-plugin
+          path: |
+            zotero-plugin/dist/zoty-bridge.xpi
+            zotero-plugin/dist/zoty-bridge-updates.json
 
   github-release:
     needs: build-artifacts
@@ -38,13 +42,14 @@ jobs:
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          name: zotero-plugin-xpi
+          name: zotero-plugin
           path: zotero-plugin/dist
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*
             zotero-plugin/dist/zoty-bridge.xpi
+            zotero-plugin/dist/zoty-bridge-updates.json
 
   publish-pypi:
     needs: build-artifacts
