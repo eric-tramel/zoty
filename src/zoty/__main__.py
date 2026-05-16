@@ -1,5 +1,5 @@
-"""Allow `python -m zoty` to start the server."""
+"""Allow `python -m zoty` to use the zoty CLI."""
 
-from zoty.server import main
+from zoty.cli import main
 
-main()
+raise SystemExit(main())
