@@ -22,7 +22,7 @@ MCP server that connects AI agents to your local Zotero library. Provides 8 tool
 Add from the command line:
 
 ```bash
-claude mcp add zoty -- uvx zoty
+claude mcp add zoty -- uvx zoty mcp
 ```
 
 Add to your `.mcp.json` or `~/.claude/settings.json`:
@@ -32,7 +32,7 @@ Add to your `.mcp.json` or `~/.claude/settings.json`:
   "mcpServers": {
     "zoty": {
       "command": "uvx",
-      "args": ["zoty"]
+      "args": ["zoty", "mcp"]
     }
   }
 }
@@ -43,7 +43,7 @@ Add to your `.mcp.json` or `~/.claude/settings.json`:
 Add from the command line:
 
 ```bash
-codex mcp add zoty -- uvx zoty
+codex mcp add zoty -- uvx zoty mcp
 ```
 
 Add to your `~/.codex/config.toml`:
@@ -51,7 +51,7 @@ Add to your `~/.codex/config.toml`:
 ```toml
 [mcp_servers.zoty]
 command = "uvx"
-args = ["zoty"]
+args = ["zoty", "mcp"]
 ```
 
 ## Installation
@@ -61,7 +61,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 Run without installing (recommended for MCP setups):
 
 ```bash
-uvx zoty
+uvx zoty mcp
 ```
 
 Install persistently:
@@ -79,17 +79,24 @@ uv tool upgrade zoty
 If you run zoty with `uvx` instead of installing it, refresh to the latest published version with:
 
 ```bash
-uvx --refresh zoty
+uvx --refresh zoty --version
+uvx --refresh zoty doctor
+uvx --refresh zoty setup
 ```
 
 From a local checkout:
 
 ```bash
-uv run zoty
+uv run zoty mcp
 
 # Or install from source as a tool
 uv tool install .
 ```
+
+The Python package provides the user CLI and MCP server through PyPI. The Zotero
+bridge plugin is distributed as a bundled XPI inside the Python package and as a
+GitHub Releases asset; future bridge updates are advertised through the Zotero
+update manifest published with each release.
 
 ## PDF Reading Advice for Agents
 
@@ -113,7 +120,13 @@ A tiny Zotero 7/8/9 plugin that lets zoty execute JavaScript inside Zotero's pri
 
 ### Install the plugin
 
-1. Download `zoty-bridge.xpi` from the [latest release](https://github.com/eric-tramel/zoty/releases/latest), or build it yourself:
+1. Locate the bundled XPI, download `zoty-bridge.xpi` from the [latest release](https://github.com/eric-tramel/zoty/releases/latest), or build it yourself:
+   ```bash
+   uvx --refresh zoty setup --download-only
+   ```
+   ```bash
+   uvx --refresh zoty setup
+   ```
    ```bash
    make build
    ```
@@ -121,8 +134,14 @@ A tiny Zotero 7/8/9 plugin that lets zoty execute JavaScript inside Zotero's pri
 3. Restart Zotero.
 4. Confirm the bridge is running:
    ```bash
-   curl http://127.0.0.1:24119/status
+   uvx --refresh zoty doctor
    ```
+
+`zoty setup` is a guided, safe default flow. It checks Zotero's local API,
+checks the bridge endpoint, points you at the packaged XPI, and tells you the
+next concrete action. `zoty setup --check` is equivalent to diagnostics without
+changes. Advanced local development can use `zoty setup --install-profile`, but
+that command refuses to copy into the Zotero profile while Zotero is running.
 
 Current bridge releases include a Zotero update manifest, so future bridge updates can be detected by Zotero after this XPI is installed.
 
@@ -214,7 +233,7 @@ If you expect multiple sessions to pull papers at the same time, start one long-
 Start one shared local server:
 
 ```bash
-zoty --transport streamable-http --host 127.0.0.1 --port 8000
+zoty mcp --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
 The shared MCP endpoint will be:
@@ -226,7 +245,7 @@ http://127.0.0.1:8000/mcp
 If you want a different endpoint path:
 
 ```bash
-zoty \
+zoty mcp \
   --transport streamable-http \
   --host 127.0.0.1 \
   --port 8000 \
@@ -257,7 +276,8 @@ Avoid this pattern when multiple sessions may import papers in parallel, because
 {
   "mcpServers": {
     "zoty": {
-      "command": "zoty"
+      "command": "zoty",
+      "args": ["mcp"]
     }
   }
 }
@@ -266,7 +286,7 @@ Avoid this pattern when multiple sessions may import papers in parallel, because
 Recommended boot sequence:
 
 1. Boot Zotero and make sure the Zotero connector and `zoty-bridge` plugin are available.
-2. Start one shared zoty server with `--transport streamable-http`.
+2. Start one shared zoty server with `zoty mcp --transport streamable-http`.
 3. Configure each agent or MCP client to connect to that existing server URL instead of launching its own copy.
 4. Let the shared server serialize arXiv metadata lookups and rate-limit arXiv PDF downloads for everyone.
 

@@ -12,7 +12,7 @@ release-build:
 	bash zotero-plugin/build.sh --release-tag "$(RELEASE_TAG)" --require-release-tag-match
 
 verify-build: build
-	git diff --exit-code -- $(XPI) $(UPDATE_MANIFEST)
+	git diff --exit-code -- $(XPI) $(UPDATE_MANIFEST) src/zoty/assets/zoty-bridge.xpi
 
 test:
 	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v

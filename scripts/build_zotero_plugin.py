@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ DIST_DIR = PLUGIN_DIR / "dist"
 MANIFEST_PATH = PLUGIN_DIR / "manifest.json"
 BOOTSTRAP_PATH = PLUGIN_DIR / "bootstrap.js"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
+BUNDLED_XPI_PATH = REPO_ROOT / "src/zoty/assets/zoty-bridge.xpi"
 
 PLUGIN_ID = "zoty-bridge@zoty.dev"
 XPI_NAME = "zoty-bridge.xpi"
@@ -86,6 +88,8 @@ def main() -> int:
     xpi_path = DIST_DIR / XPI_NAME
     update_manifest_path = DIST_DIR / UPDATE_MANIFEST_NAME
     _write_xpi(xpi_path)
+    BUNDLED_XPI_PATH.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(xpi_path, BUNDLED_XPI_PATH)
     digest = _sha256(xpi_path)
     _write_update_manifest(
         update_manifest_path,
@@ -96,6 +100,7 @@ def main() -> int:
     )
 
     print(f"Built: {xpi_path}")
+    print(f"Bundled: {BUNDLED_XPI_PATH}")
     print(f"Built: {update_manifest_path}")
     print(f"Bridge version: {bridge_version}")
     print(f"Release tag: {release_tag}")
