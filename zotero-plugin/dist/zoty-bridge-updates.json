@@ -3,9 +3,9 @@
     "zoty-bridge@zoty.dev": {
       "updates": [
         {
-          "version": "0.2.2",
-          "update_link": "https://github.com/eric-tramel/zoty/releases/download/v0.2.2/zoty-bridge.xpi",
-          "update_hash": "sha256:37786df770c383bcf2a3db18515364374d92e8cc90ca51f129a8c4ea94b23e25",
+          "version": "0.3.0",
+          "update_link": "https://github.com/eric-tramel/zoty/releases/download/v0.3.0/zoty-bridge.xpi",
+          "update_hash": "sha256:5045e1154c8b8055aef813bbc09194a169d4fa19ac12a826201e976780db48f2",
           "applications": {
             "zotero": {
               "strict_min_version": "7.0",
